@@ -6,7 +6,7 @@ real ``~/.claude-memory`` and never pick up ambient config/env.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -35,7 +35,7 @@ def config(data_dir: Path) -> Config:
 
 
 @pytest.fixture
-def make_config(data_dir: Path) -> Iterator[object]:
+def make_config(data_dir: Path) -> Iterator[Callable[..., Config]]:
     """Factory returning a Config with ad-hoc overrides layered on the tmp data dir."""
 
     def _make(**overrides: object) -> Config:
