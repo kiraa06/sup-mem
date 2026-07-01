@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments (uv)
+.venv/
+venv/
+env/
+
+# uv: keep uv.lock committed; ignore the cache
+.uv/
+
+# Test / coverage artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local runtime data (claude-memory writes to ~/.claude-memory by default;
+# ignore any accidental in-repo store or logs)
+.claude-memory/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Env / secrets
+.env
+.env.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
