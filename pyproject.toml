@@ -70,7 +70,7 @@ warn_unreachable = true
 
 # Optional third-party libs (extras) may be absent; don't fail the base type-check on them.
 [[tool.mypy.overrides]]
-module = ["qdrant_client.*", "fastembed.*", "voyageai.*", "openai.*", "psycopg.*", "pgvector.*"]
+module = ["mcp.*", "qdrant_client.*", "fastembed.*", "voyageai.*", "openai.*", "psycopg.*", "pgvector.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

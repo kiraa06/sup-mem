@@ -84,9 +84,12 @@ class FtsConfig:
 
     k1: float = 1.2
     b: float = 0.75
-    # Logistic squash of the raw (positive) BM25 relevance: s = 1/(1+exp(-steepness*(x-mid))).
-    squash_midpoint: float = 3.0
-    squash_steepness: float = 0.6
+    # Logistic squash of the (positive) BM25 relevance: s = 1/(1+exp(-steepness*(x-mid))).
+    # Recall-biased defaults: BM25 magnitudes are small in small stores (low IDF), so a low
+    # midpoint keeps genuine multi-term matches above the default threshold while a lone
+    # common-term match stays below it. Tune with the retrieval log (§8) on your own data.
+    squash_midpoint: float = 1.0
+    squash_steepness: float = 1.0
 
 
 @dataclass

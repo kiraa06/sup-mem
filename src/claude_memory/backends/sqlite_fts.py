@@ -4,14 +4,16 @@ Zero optional dependencies — a single embedded file at ``~/.claude-memory/memo
 server, no model, no Docker. Uses the stdlib ``sqlite3`` module only.
 
 Scoring (see §14 for the documented open decision):
-  * FTS5's built-in ``bm25()`` C function ranks candidates against the porter-stemmed
+  * FTS5's ``bm25()`` C function fetches + pre-orders candidates against the porter-stemmed
     inverted index — fast enough for the <10 ms/10k budget (§8).
-  * That raw rank (negative; more-negative = better) is squashed to 0..1 with a **tunable
-    logistic** so ``threshold`` is portable across backends (§6.1). The live knobs are
-    ``fts.squash_midpoint`` / ``fts.squash_steepness``.
+  * The reported 0..1 score is **term coverage** (fraction of the query's distinct terms the
+    memory contains) lifted toward 1 by a **tunable logistic squash of BM25**:
+    ``score = coverage + (1 - coverage) * squash(bm25)``. Coverage is the robust floor — it
+    stays well-behaved in small stores where BM25's IDF turns negative (a term present in most
+    documents) — while the squash (``fts.squash_midpoint`` / ``fts.squash_steepness``) refines
+    ranking where BM25 is meaningful. This keeps ``threshold`` portable across backends (§6.1).
   * ``fts.k1`` / ``fts.b`` are kept in config for completeness, but SQLite FTS5 fixes k1/b
-    internally (1.2 / 0.75) and does not expose them to ``bm25()``; the squash is therefore
-    the effective FTS tuning surface for v1.
+    internally (1.2 / 0.75) and does not expose them to ``bm25()``.
 """
 
 from __future__ import annotations
@@ -46,16 +48,22 @@ def _make_id(text: str, source: str) -> str:
     return digest[:24]
 
 
-def _match_expression(query: str) -> str | None:
-    """Turn free text into a safe FTS5 MATCH string (quoted OR-ed terms).
+_POOL_CAP = 256  # candidates fetched (bm25-ordered) before coverage re-ranking
 
-    Quoting each token as a string literal means user punctuation can never be parsed as an
-    FTS5 operator, so a malformed query degrades to "no match" rather than raising (I2/fail-open).
+
+def _query_terms(query: str) -> list[str]:
+    """Distinct lowercased word tokens (order preserved, capped)."""
+    tokens = _WORD_RE.findall(query.lower())
+    return list(dict.fromkeys(str(tok) for tok in tokens))[:_MAX_QUERY_TERMS]
+
+
+def _match_expression(terms: list[str]) -> str:
+    """Safe FTS5 MATCH string: each term quoted as a string literal and OR-ed.
+
+    Quoting means user punctuation can never be parsed as an FTS5 operator, so a malformed
+    query degrades to "no match" rather than raising (I2 / fail-open).
     """
-    tokens = _WORD_RE.findall(query.lower())[:_MAX_QUERY_TERMS]
-    if not tokens:
-        return None
-    return " OR ".join(f'"{tok}"' for tok in tokens)
+    return " OR ".join(f'"{term}"' for term in terms)
 
 
 class SqliteFtsBackend(MemoryBackend):
@@ -147,8 +155,8 @@ class SqliteFtsBackend(MemoryBackend):
     def search(self, query: str, k: int, threshold: float) -> list[Hit]:
         if k <= 0:
             return []
-        match = _match_expression(query)
-        if match is None:
+        terms = _query_terms(query)
+        if not terms:
             return []
         rows = self._conn.execute(
             """
@@ -160,14 +168,24 @@ class SqliteFtsBackend(MemoryBackend):
             ORDER BY rank
             LIMIT ?
             """,
-            (match, k),
+            (_match_expression(terms), _POOL_CAP),
         ).fetchall()
 
+        n_terms = len(terms)
+        term_set = set(terms)
+        # (score, -bm25_order) — bm25 order breaks coverage ties (earlier = stronger).
+        scored: list[tuple[float, int, Any]] = []
+        for order, row in enumerate(rows):
+            doc_terms = set(_WORD_RE.findall(str(row["text"]).lower()))
+            coverage = sum(1 for term in term_set if term in doc_terms) / n_terms
+            score = coverage + (1.0 - coverage) * self._squash(float(row["rank"]))
+            scored.append((score, -order, row))
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
         hits: list[Hit] = []
-        for row in rows:
-            score = self._squash(float(row["rank"]))
+        for score, _, row in scored:
             if score < threshold:
-                continue  # rank order == relevance order, so remaining rows only score lower
+                break  # sorted best-first → nothing remaining can clear the threshold
             hits.append(
                 Hit(
                     id=str(row["id"]),
@@ -176,6 +194,8 @@ class SqliteFtsBackend(MemoryBackend):
                     metadata=_load_meta(row["metadata"]),
                 )
             )
+            if len(hits) >= k:
+                break
         return hits
 
     # -- introspection --------------------------------------------------------------------
@@ -203,11 +223,15 @@ class SqliteFtsBackend(MemoryBackend):
         return [topic for topic, _ in counter.most_common(max_topics)]
 
     def health(self) -> dict[str, Any]:
-        count = int(self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+        row = self._conn.execute(
+            "SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM memories"
+        ).fetchone()
+        count = int(row[0])
         return {
             "backend": "sqlite_fts",
             "count": count,
             "embedding": None,  # lexical backend — no embedding model (I7 not applicable)
+            "revision": f"{count}:{row[1]}",  # manifest cache key (§6.7): count + max(updated_at)
             "db_path": str(self._config.db_path),
         }
 
