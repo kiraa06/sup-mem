@@ -269,3 +269,69 @@ def load_config(overrides: dict[str, Any] | None = None) -> Config:
     merged = _deep_merge(merged, overrides)
     merged["data_dir"] = str(data_dir)  # always the fully-resolved dir
     return cast(Config, _build(Config, merged))
+
+
+def render_default_toml(config: Config | None = None) -> str:
+    """Render a fully-documented ``config.toml`` with every §8 knob present (§13).
+
+    ``data_dir`` is intentionally omitted — it locates this file, so it comes from env/flags.
+    """
+    c = config or Config()
+
+    def _arr(values: list[str]) -> str:
+        # Single-quoted TOML literals: no escaping needed for our regex patterns.
+        return "[\n" + "".join(f"    '{v}',\n" for v in values) + "]"
+
+    def _b(value: bool) -> str:
+        return "true" if value else "false"
+
+    return f"""# claude-memory configuration — https://github.com/kiranjose/claude-memory
+# Precedence (low -> high): these defaults <- this file <- env (CLAUDE_MEMORY_*) <- CLI flags.
+# Env mirrors nested keys, e.g. CLAUDE_MEMORY_RETRIEVAL_THRESHOLD, CLAUDE_MEMORY_QDRANT_HNSW_M.
+
+backend = "{c.backend}"   # "sqlite_fts" (default, no deps) | "qdrant" (vector) | "pgvector"
+
+[retrieval]
+k = {c.retrieval.k}              # max memories injected/returned per query
+threshold = {c.retrieval.threshold}      # 0..1 relevance gate; tune with the retrieval log
+
+[tier1]
+# Skip-gate ONLY — never decides whether a relevant memory exists (I3). A turn is skipped iff
+# a skip_pattern matches AND no cue_pattern matches. Single quotes = literal (no escaping).
+skip_patterns = {_arr(c.tier1.skip_patterns)}
+cue_patterns = {_arr(c.tier1.cue_patterns)}
+
+[manifest]
+full_below = {c.manifest.full_below}     # below this many memories: list topics verbatim
+max_topics = {c.manifest.max_topics}
+token_budget = {c.manifest.token_budget}
+cache = {_b(c.manifest.cache)}
+
+[chunking]
+enabled = {_b(c.chunking.enabled)}
+max_chars = {c.chunking.max_chars}
+overlap = {c.chunking.overlap}
+
+[fts]
+k1 = {c.fts.k1}                 # FTS5 fixes k1/b internally; kept for completeness
+b = {c.fts.b}
+squash_midpoint = {c.fts.squash_midpoint}    # BM25 -> 0..1 logistic (the live FTS tuning knob)
+squash_steepness = {c.fts.squash_steepness}
+
+[embedding]
+provider = "{c.embedding.provider}"   # "" = auto-detect on `setup`
+model = "{c.embedding.model}"
+
+[qdrant]
+url = "{c.qdrant.url}"
+collection = "{c.qdrant.collection}"
+quantization = {_b(c.qdrant.quantization)}
+
+[qdrant.hnsw]
+m = {c.qdrant.hnsw.m}
+ef_construct = {c.qdrant.hnsw.ef_construct}
+ef = {c.qdrant.hnsw.ef}
+
+[logging]
+retrieval_log = {_b(c.logging.retrieval_log)}   # log (query, ids, scores, tier) for tuning (§8)
+"""

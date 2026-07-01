@@ -147,6 +147,13 @@ class QdrantBackend(MemoryBackend):
             must_not=[qm.FieldCondition(key=_META_FLAG, match=qm.MatchValue(value=True))]
         )
 
+    def initialize(self) -> EmbeddingMeta:
+        """Create the collection (if needed) and record the embedding meta (I7); returns it.
+
+        Called by `claude-memory setup` — constructs the embedder to learn the vector `dim`.
+        """
+        return self._ensure_writable().meta
+
     # -- writes ---------------------------------------------------------------------------
     def store(self, text: str, metadata: Metadata | None = None) -> str:
         text = text.strip()

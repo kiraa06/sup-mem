@@ -8,12 +8,10 @@ lets ``claude-memory --help`` work (the Phase 0 acceptance gate) and lets tests 
 from __future__ import annotations
 
 import argparse
-import sys
 from collections.abc import Sequence
 
 from claude_memory import __version__
-
-_PENDING = "not implemented yet (Phase 4)"
+from claude_memory.config import load_config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,8 +59,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 0
-    print(f"claude-memory {args.command}: {_PENDING}", file=sys.stderr)
-    return 1
+
+    overrides: dict[str, object] = {}
+    if args.data_dir:
+        overrides["data_dir"] = args.data_dir
+    config = load_config(overrides=overrides)
+
+    from claude_memory import commands
+
+    if args.command == "init":
+        return commands.cmd_init(config)
+    if args.command == "setup":
+        return commands.cmd_setup(config, args.backend, assume_yes=args.yes)
+    if args.command == "doctor":
+        return commands.cmd_doctor(config)
+    if args.command == "reindex":
+        return commands.cmd_reindex(config)
+    if args.command == "serve":
+        return commands.cmd_serve(config)
+    if args.command == "manifest":
+        return commands.cmd_manifest(config)
+    parser.print_help()  # unknown command (shouldn't happen via argparse)
+    return 2
 
 
 if __name__ == "__main__":

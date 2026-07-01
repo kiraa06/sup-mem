@@ -32,6 +32,9 @@ openai = ["openai>=1.0"]
 
 [project.scripts]
 claude-memory = "claude_memory.cli:main"
+# Console scripts the Claude Code hooks invoke (on PATH after `uv tool install`).
+claude-memory-hook-userprompt = "claude_memory.hook.user_prompt_submit:main"
+claude-memory-hook-session = "claude_memory.hook.session_start:main"
 
 [project.urls]
 Homepage = "https://github.com/kiranjose/claude-memory"
