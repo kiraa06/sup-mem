@@ -1,14 +1,17 @@
 """Register the hook + MCP server into Claude Code config — NON-CLOBBERING (HANDOVER §7).
 
-Confirmed layout (Claude Code, 2026):
+Layout (Claude Code, 2026 — verified on-machine):
   * Hooks live in ``~/.claude/settings.json`` under ``hooks`` (``UserPromptSubmit`` stdout is
     injected into context; matcher is optional for these events).
-  * User-scoped MCP servers live in ``~/.claude/.mcp.json`` under ``mcpServers``.
+  * User-scoped MCP servers live in ``~/.claude.json`` under ``mcpServers``. We register them
+    the canonical way — ``claude mcp add --scope user`` — which writes to the right place
+    regardless of version, and fall back to a direct non-clobbering merge of ``~/.claude.json``
+    only when the ``claude`` binary isn't on PATH.
   * Claude Code does NOT hot-reload — a restart is required to pick up the changes.
 
-Every write deep-merges into existing config (preserving the user's other keys/hooks/servers),
-dedupes our own entries (idempotent), and keeps a ``.claude-memory.bak`` of the prior file.
-``claude_dir`` is overridable (and honors ``CLAUDE_CONFIG_DIR``) so this is testable.
+Hook writes deep-merge into existing config (preserving the user's other keys/hooks), dedupe
+our own entries (idempotent), and keep a ``.claude-memory.bak`` of the prior file.
+``claude_dir`` / ``claude_json`` are overridable (and honor ``CLAUDE_CONFIG_DIR``) for testing.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,7 +27,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from claude_memory.config import Config
 
-# Claude Code hook event → the console script that services it.
 HOOK_EVENTS: dict[str, str] = {
     "UserPromptSubmit": "claude-memory-hook-userprompt",
     "SessionStart": "claude-memory-hook-session",
@@ -68,6 +71,9 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
             os.unlink(tmp)
 
 
+# --------------------------------------------------------------------------------------------
+# Hooks → ~/.claude/settings.json
+# --------------------------------------------------------------------------------------------
 def _entries_have_command(entries: list[Any], *commands: str) -> bool:
     for entry in entries:
         if not isinstance(entry, dict):
@@ -91,7 +97,7 @@ def _merge_hooks(settings_path: Path) -> bool:
             entries = []
             hooks[event] = entries
         if _entries_have_command(entries, command, script):
-            continue  # already registered (idempotent, tolerant of bare-name vs abs-path)
+            continue  # already registered (tolerant of bare-name vs abs-path)
         entries.append({"hooks": [{"type": "command", "command": command}]})
         changed = True
     if changed:
@@ -99,30 +105,77 @@ def _merge_hooks(settings_path: Path) -> bool:
     return changed
 
 
-def _merge_mcp(mcp_path: Path) -> bool:
-    data = _load_json(mcp_path)
+# --------------------------------------------------------------------------------------------
+# MCP server → ~/.claude.json (via `claude mcp add`, or a direct merge fallback)
+# --------------------------------------------------------------------------------------------
+def _mcp_command() -> str:
+    return _resolve_command(MCP_SERVER_NAME)
+
+
+def _register_mcp_via_cli(command: str) -> bool | None:
+    """Register with `claude mcp add --scope user`. Returns True/False if handled (changed?),
+    or None if the `claude` binary isn't available (caller should fall back)."""
+    claude = shutil.which("claude")
+    if not claude:
+        return None
+    existing = subprocess.run(
+        [claude, "mcp", "get", MCP_SERVER_NAME], capture_output=True, text=True
+    )
+    if existing.returncode == 0 and command in existing.stdout:
+        return False  # already registered with our command → idempotent
+    subprocess.run(
+        [claude, "mcp", "remove", MCP_SERVER_NAME, "-s", "user"], capture_output=True, text=True
+    )  # clear any stale entry; ignore failure if absent
+    added = subprocess.run(
+        [claude, "mcp", "add", MCP_SERVER_NAME, "--scope", "user", "--", command, "serve"],
+        capture_output=True,
+        text=True,
+    )
+    return added.returncode == 0
+
+
+def _merge_mcp_json(json_path: Path, command: str) -> bool:
+    """Non-clobbering merge into a Claude config file's top-level ``mcpServers``."""
+    data = _load_json(json_path)
     if not isinstance(data.get("mcpServers"), dict):
         data["mcpServers"] = {}
     servers = data["mcpServers"]
-    desired = {"command": _resolve_command(MCP_SERVER_NAME), "args": ["serve"]}
+    desired = {"command": command, "args": ["serve"]}
     if servers.get(MCP_SERVER_NAME) == desired:
         return False
     servers[MCP_SERVER_NAME] = desired
-    _atomic_write_json(mcp_path, data)
+    _atomic_write_json(json_path, data)
     return True
 
 
-def register_into_claude_code(config: Config, *, claude_dir: Path | None = None) -> dict[str, Any]:
+def register_into_claude_code(
+    config: Config,
+    *,
+    claude_dir: Path | None = None,
+    claude_json: Path | None = None,
+    use_cli: bool = True,
+) -> dict[str, Any]:
     """Merge our hooks + MCP server into Claude Code config. Returns a report of what changed."""
     directory = claude_config_dir(claude_dir)
     directory.mkdir(parents=True, exist_ok=True)
     settings_path = directory / "settings.json"
-    mcp_path = directory / ".mcp.json"
+    hooks_changed = _merge_hooks(settings_path)
+
+    command = _mcp_command()
+    mcp_json = claude_json if claude_json is not None else Path.home() / ".claude.json"
+    cli_result = _register_mcp_via_cli(command) if use_cli else None
+    if cli_result is not None:
+        mcp_changed = cli_result
+        mcp_target = "claude mcp (user scope → ~/.claude.json)"
+    else:
+        mcp_changed = _merge_mcp_json(mcp_json, command)
+        mcp_target = str(mcp_json)
+
     return {
         "config_dir": str(directory),
         "settings_path": str(settings_path),
-        "mcp_path": str(mcp_path),
-        "hooks_changed": _merge_hooks(settings_path),
-        "mcp_changed": _merge_mcp(mcp_path),
-        "mcp_command": _resolve_command(MCP_SERVER_NAME),
+        "mcp_target": mcp_target,
+        "hooks_changed": hooks_changed,
+        "mcp_changed": mcp_changed,
+        "mcp_command": command,
     }

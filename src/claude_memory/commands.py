@@ -149,7 +149,13 @@ volumes:
 """
 
 
-def cmd_init(config: Config, *, claude_dir: Path | None = None) -> int:
+def cmd_init(
+    config: Config,
+    *,
+    claude_dir: Path | None = None,
+    claude_json: Path | None = None,
+    use_cli: bool = True,
+) -> int:
     """Default one-liner: create the SQLite FTS store + register with Claude Code (§7)."""
     from rich.console import Console
 
@@ -165,14 +171,16 @@ def cmd_init(config: Config, *, claude_dir: Path | None = None) -> int:
         config.pinned_facts_path.write_text(PINNED_FACTS_TEMPLATE, encoding="utf-8")
     get_backend(config).close()  # creates the SQLite FTS schema
 
-    report = register_into_claude_code(config, claude_dir=claude_dir)
+    report = register_into_claude_code(
+        config, claude_dir=claude_dir, claude_json=claude_json, use_cli=use_cli
+    )
     console.print(f"[green]✓[/] claude-memory ready (SQLite FTS) — {config.data_dir}")
     console.print(
         f"  hooks      → {report['settings_path']} "
         f"({'updated' if report['hooks_changed'] else 'already registered'})"
     )
     console.print(
-        f"  MCP server → {report['mcp_path']} "
+        f"  MCP server → {report['mcp_target']} "
         f"({'updated' if report['mcp_changed'] else 'already registered'})"
     )
     console.print(f"  pinned facts: {config.pinned_facts_path}")
@@ -215,13 +223,15 @@ def cmd_setup(
     *,
     assume_yes: bool = False,
     claude_dir: Path | None = None,
+    claude_json: Path | None = None,
+    use_cli: bool = True,
 ) -> int:
     """Set up a backend (§7). Qdrant: docker up → detect embedder → collection → register."""
     from rich.console import Console
 
     console = Console()
     if backend_name == "sqlite_fts":
-        return cmd_init(config, claude_dir=claude_dir)
+        return cmd_init(config, claude_dir=claude_dir, claude_json=claude_json, use_cli=use_cli)
     if backend_name != "qdrant":
         console.print(f"[red]setup for backend {backend_name!r} is not supported[/]")
         return 1
@@ -262,7 +272,9 @@ def cmd_setup(
     finally:
         backend.close()
 
-    report = register_into_claude_code(merged, claude_dir=claude_dir)
+    report = register_into_claude_code(
+        merged, claude_dir=claude_dir, claude_json=claude_json, use_cli=use_cli
+    )
     console.print(f"[green]✓[/] claude-memory set up (Qdrant @ {merged.qdrant.url})")
     console.print(
         f"  hooks      → {report['settings_path']} "

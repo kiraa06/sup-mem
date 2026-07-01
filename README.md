@@ -75,7 +75,7 @@ The hook is a **short-lived process that never loads a model**: on the FTS path 
 `init`/`setup` merge — **never clobber** — your Claude Code config:
 
 - **Hooks** → `~/.claude/settings.json` under `hooks` (a `UserPromptSubmit` entry and a `SessionStart` entry). Your existing hooks and other keys are preserved; re-running is idempotent, and the prior file is backed up as `settings.json.claude-memory.bak`.
-- **MCP server** → `~/.claude/.mcp.json` under `mcpServers` as `claude-memory` → `claude-memory serve`.
+- **MCP server** → registered via `claude mcp add --scope user` into `~/.claude.json` under `mcpServers` (falls back to a direct, non-clobbering merge if the `claude` CLI isn't on PATH).
 
 Claude Code does not hot-reload config — **restart** after `init`/`setup`. Honors `CLAUDE_CONFIG_DIR`.
 
