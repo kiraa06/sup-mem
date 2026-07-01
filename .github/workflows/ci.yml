@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-type:
+    name: Lint + type
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # Install all extras so mypy type-checks the vector/hosted-embedder code paths too.
+      - run: uv sync --extra qdrant --extra pgvector --extra voyage --extra openai
+      - name: ruff (lint)
+        run: uv run ruff check .
+      - name: ruff (format check)
+        run: uv run ruff format --check .
+      - name: mypy
+        run: uv run mypy
+
+  test:
+    name: Tests (SQLite path, no optional deps)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      # No extras — proves the default install works with zero optional deps (§11.3).
+      - run: uv sync
+      - run: uv run pytest -q -m "not slow and not qdrant"
+
+  test-qdrant:
+    name: Tests (Qdrant vector path)
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.12.4
+        ports:
+          - 6333:6333
+    env:
+      QDRANT_URL: http://localhost:6333
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --extra qdrant
+      - name: Wait for Qdrant
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sf "$QDRANT_URL/readyz" >/dev/null; then echo "ready"; exit 0; fi
+            sleep 1
+          done
+          echo "Qdrant did not become ready" >&2; exit 1
+      - run: uv run pytest -q -m "qdrant"

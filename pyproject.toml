@@ -1,0 +1,82 @@
+[project]
+name = "claude-memory"
+version = "0.1.0"
+description = "A self-hosted, pluggable global memory layer for Claude that persists context across sessions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Kiran Jose" }]
+keywords = ["claude", "memory", "mcp", "rag", "llm", "context", "sqlite", "qdrant"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+# Base deps only — NO model, NO Docker, NO vector client (I8). SQLite FTS uses the stdlib.
+dependencies = [
+    "rich>=13.7",   # pretty doctor/detect tables + reindex progress
+    "mcp>=1.2",     # MCP server (one of the two front-doors, I1); imported lazily in `serve`
+]
+
+[project.optional-dependencies]
+# Opt-in vector path (I8): local ONNX embedder + Qdrant client. Still no separate model server.
+qdrant = ["qdrant-client>=1.9", "fastembed>=0.3"]
+pgvector = ["psycopg[binary]>=3.1", "pgvector>=0.3"]
+# Hosted embedders (combine with a vector backend). Warn: network + cost + leaves the box.
+voyage = ["voyageai>=0.2"]
+openai = ["openai>=1.0"]
+
+[project.scripts]
+claude-memory = "claude_memory.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/kiranjose/claude-memory"
+Repository = "https://github.com/kiranjose/claude-memory"
+Issues = "https://github.com/kiranjose/claude-memory/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claude_memory"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["claude_memory"]
+mypy_path = "src"
+strict = true
+warn_unreachable = true
+
+# Optional third-party libs (extras) may be absent; don't fail the base type-check on them.
+[[tool.mypy.overrides]]
+module = ["qdrant_client.*", "fastembed.*", "voyageai.*", "openai.*", "psycopg.*", "pgvector.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "slow: latency/perf tests and anything that seeds large stores",
+    "qdrant: requires a reachable Qdrant service (QDRANT_URL)",
+]
