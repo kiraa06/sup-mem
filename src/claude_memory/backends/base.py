@@ -48,6 +48,15 @@ class MemoryBackend(ABC):
     def reindex(self, progress: ProgressCallback | None = None) -> None:
         """Re-embed / rebuild the store. No-op for lexical backends; required for vector (I7)."""
 
+    @property
+    def hook_safe(self) -> bool:
+        """Whether the per-prompt hook may call ``search()`` without loading a model (I2).
+
+        Lexical backends and remote-embedder vector backends are safe; an in-process embedder
+        (fastembed) is not, so the hook skips Tier-2 for it. Defaults to True.
+        """
+        return True
+
     # --- Lifecycle (optional to override) -------------------------------------------------
     def close(self) -> None:  # noqa: B027
         """Release resources (DB handles, clients). Optional override; default no-op."""

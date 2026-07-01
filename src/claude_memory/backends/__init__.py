@@ -22,12 +22,14 @@ def get_backend(config: Config) -> MemoryBackend:
         from claude_memory.backends.sqlite_fts import SqliteFtsBackend
 
         return SqliteFtsBackend(config)
-    if name in {"qdrant", "pgvector"}:
-        # Wired up in Phase 3 (vector backend). Until then, fail explicitly rather than import
-        # a module that does not exist yet (keeps the base type-check + install clean).
+    if name == "qdrant":
+        from claude_memory.backends.qdrant import QdrantBackend
+
+        return QdrantBackend(config)
+    if name == "pgvector":
+        # Documented v1 stub (§14): the interface is reserved; not implemented.
         raise NotImplementedError(
-            f"The {name!r} backend arrives in Phase 3. "
-            f"Install its extra first: pip install 'claude-memory[{name}]'."
+            "The pgvector backend is a documented v1 stub (§14). Use 'sqlite_fts' or 'qdrant'."
         )
     raise ValueError(f"Unknown backend {name!r}. Expected one of: sqlite_fts, qdrant, pgvector.")
 

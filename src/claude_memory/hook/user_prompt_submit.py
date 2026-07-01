@@ -65,6 +65,10 @@ def _retrieve(prompt: str, config: Config) -> list[Hit]:
 
     backend = get_backend(config)
     try:
+        if not backend.hook_safe:
+            # e.g. qdrant + fastembed: embedding here would load a model in the short-lived
+            # hook (I2). The MCP `recall` tool still works from the warm server.
+            return []
         return backend.search(prompt, k=config.retrieval.k, threshold=config.retrieval.threshold)
     finally:
         backend.close()

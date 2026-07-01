@@ -7,6 +7,8 @@ and the exact same assertions must pass there too (I6).
 from __future__ import annotations
 
 import importlib.util
+import os
+import uuid
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -15,7 +17,11 @@ from claude_memory.backends import get_backend
 from claude_memory.backends.base import MemoryBackend
 from claude_memory.config import Config
 
-BACKEND_NAMES = ["sqlite_fts"]
+# sqlite_fts always; qdrant is marked so `-m "not qdrant"` skips it and `-m qdrant` selects it.
+BACKEND_PARAMS = [
+    pytest.param("sqlite_fts"),
+    pytest.param("qdrant", marks=pytest.mark.qdrant),
+]
 
 # Memories with clearly separable relevance so BM25 ordering is deterministic, not flaky.
 SEED = [
@@ -38,15 +44,38 @@ SEED = [
 ]
 
 
-@pytest.fixture(params=BACKEND_NAMES)
+@pytest.fixture(params=BACKEND_PARAMS)
 def backend(
     request: pytest.FixtureRequest, make_config: Callable[..., Config]
 ) -> Iterator[MemoryBackend]:
     name: str = request.param
-    config = make_config(backend=name)
-    if name == "qdrant" and importlib.util.find_spec("qdrant_client") is None:
-        pytest.skip("qdrant_client not installed")
-    b = get_backend(config)
+    if name == "qdrant":
+        if (
+            importlib.util.find_spec("qdrant_client") is None
+            or importlib.util.find_spec("fastembed") is None
+        ):
+            pytest.skip("qdrant extra (qdrant-client + fastembed) not installed")
+        url = os.environ.get("QDRANT_URL", "http://localhost:6333")
+        collection = f"cm_test_{uuid.uuid4().hex[:12]}"
+        config = make_config(
+            backend="qdrant",
+            qdrant={"url": url, "collection": collection},
+            embedding={"provider": "fastembed", "model": "BAAI/bge-small-en-v1.5"},
+        )
+        b = get_backend(config)
+        try:
+            b.health()  # forces a connection; skip cleanly if Qdrant isn't up
+        except Exception as exc:
+            b.close()
+            pytest.skip(f"Qdrant not reachable at {url}: {exc}")
+        try:
+            yield b
+        finally:
+            b._client.delete_collection(collection)  # noqa: SLF001 — test cleanup
+            b.close()
+        return
+
+    b = get_backend(make_config(backend=name))
     yield b
     b.close()
 
@@ -126,11 +155,27 @@ def test_reindex_is_safe(backend: MemoryBackend) -> None:
     assert backend.search("postgres pool", k=3, threshold=0.0)  # still searchable
 
 
-def test_empty_and_nonmatching_queries(backend: MemoryBackend) -> None:
+def test_empty_and_tokenless_queries(backend: MemoryBackend) -> None:
+    # Universal across backends: no query tokens at all → no hits.
     _seed(backend)
     assert backend.search("", k=5, threshold=0.0) == []
-    assert backend.search("!!! ??? ...", k=5, threshold=0.0) == []  # punctuation-only, no terms
-    assert backend.search("zzzzzxxxxx qqqqwwwww vvvvbbbb", k=5, threshold=0.0) == []
+    assert backend.search("!!! ??? ...", k=5, threshold=0.0) == []  # punctuation only, no words
+
+
+def test_sqlite_nonmatching_terms_return_empty() -> None:
+    # Lexical-only property (a vector backend returns nearest neighbours regardless): real
+    # words absent from the store produce no FTS match.
+    import tempfile
+
+    from claude_memory.config import load_config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        b = get_backend(load_config(overrides={"data_dir": tmp, "backend": "sqlite_fts"}))
+        try:
+            b.store("something about databases", {"source": "s"})
+            assert b.search("zzzzzxxxxx qqqqwwwww vvvvbbbb", k=5, threshold=0.0) == []
+        finally:
+            b.close()
 
 
 def test_default_install_needs_no_optional_deps(make_config: Callable[..., Config]) -> None:

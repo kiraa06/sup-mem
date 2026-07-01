@@ -69,9 +69,17 @@ strict = true
 warn_unreachable = true
 
 # Optional third-party libs (extras) may be absent; don't fail the base type-check on them.
+# mcp ships types and we use its decorators — keep it typed, just tolerate absence.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "qdrant_client.*", "fastembed.*", "voyageai.*", "openai.*", "psycopg.*", "pgvector.*"]
+module = ["mcp.*"]
 ignore_missing_imports = true
+
+# Optional vector/embedding libs: don't parse their stubs (treat symbols as Any). This also
+# stops mypy following qdrant_client into numpy's 3.12+ stub syntax while we target 3.11.
+[[tool.mypy.overrides]]
+module = ["qdrant_client.*", "fastembed.*", "voyageai.*", "openai.*", "psycopg.*", "pgvector.*", "numpy", "numpy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
