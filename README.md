@@ -2,7 +2,14 @@
 
 [![CI](https://github.com/kiraa06/sup-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/kiraa06/sup-mem/actions/workflows/ci.yml)
 
-**A self-hosted, pluggable global memory layer for Claude that persists context across sessions — model-free and Docker-free by default, with ultra-fast per-turn retrieval.**
+**A self-hosted memory layer for Claude Code that persists context across sessions — and, unlike every other memory tool, *measures whether its memories actually helped*.**
+
+Every memory system stores and retrieves. sup-mem also closes the loop:
+
+- **Memories have a P&L.** A `Stop` hook reads each finished response and scores every injected memory: *referenced, ignored, or contradicted*. `sup-mem roi` shows what each memory costs in context tokens vs. contributes.
+- **It tunes itself on that evidence.** During development, sup-mem's ledger caught its own retrieval running at a 19% hit rate (~65k wasted tokens in one session), auto-raised its threshold losslessly (0.35 → 0.80), and a per-memory clip cut injection cost **86%** — all measured, not vibes.
+- **Zero infrastructure by default.** One command: SQLite FTS5, no Docker, no embedding model, <10 ms retrieval. Opt into Qdrant vector search when you outgrow it.
+- **Built for incident people.** Bitemporal recall (`--as-of 2026-06-01`: *what did we believe then?*), a tamper-evident provenance chain (`sup-mem verify`), memories that survive context compaction, and evidence-based decay with hard size caps.
 
 ![sup-mem demo: status, automatic per-prompt injection, bitemporal --as-of recall, provenance verify](docs/demo.gif)
 
@@ -160,6 +167,29 @@ Retrieval quality is a **dial you tune on your own data** — and we give you th
 - **Tier-1 skip/cue patterns**: fully configurable regex lists — the skip-gate short-circuits trivial turns but never decides whether a *relevant* memory exists.
 
 Everything lives in `~/.sup-mem/config.toml` (written on `init`, every knob documented). Inspect the topic index anytime with `sup-mem manifest`; check health with `sup-mem doctor`.
+
+## How it compares
+
+Fair fight: mem0/Zep/Letta are excellent multi-platform memory systems, and Claude Code's
+native memory needs zero setup. sup-mem's bet is different — deep integration with one tool
+(Claude Code's hook lifecycle) buys capabilities a platform-agnostic layer can't have:
+
+| | sup-mem | mem0 / Zep / Letta | Claude Code native memory |
+|---|---|---|---|
+| Stores & retrieves memories | ✓ | ✓ | ✓ |
+| **Measures whether an injected memory helped** (outcome ledger) | ✓ | ✗ | ✗ |
+| **Self-tunes retrieval on that evidence** (lossless auto-tune) | ✓ | ✗ | ✗ |
+| Token ROI per memory (`roi`) | ✓ | ✗ | ✗ |
+| Bitemporal recall (`--as-of`: beliefs *then* vs now) | ✓ | partial (Zep: temporal graph) | ✗ |
+| Tamper-evident provenance chain (`verify`) | ✓ | ✗ | ✗ |
+| Evidence-based decay + hard size caps | ✓ | partial | ✗ |
+| Survives context compaction (PreCompact capture) | ✓ | ✗ | ✗ |
+| Zero-infra default (no Docker, no model) | ✓ | varies (often hosted/vector) | ✓ |
+| Multi-platform / hosted offering | ✗ (Claude Code + Desktop MCP) | ✓ | ✗ |
+| Semantic (vector) retrieval | opt-in (Qdrant) | ✓ default | ✗ |
+
+If you need memory across many agents/frameworks, use mem0 or Zep. If you live in Claude
+Code and want memory that's accountable for its context budget, that's what this is.
 
 ## Backends
 
