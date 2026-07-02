@@ -12,7 +12,7 @@ jobs:
     name: Build + GitHub Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -38,7 +38,7 @@ jobs:
     permissions:
       id-token: write  # OIDC — no API token anywhere (PyPI trusted publisher)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
