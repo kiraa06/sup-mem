@@ -53,6 +53,13 @@ def render_plist(config: Config) -> bytes:
     return plistlib.dumps(payload)
 
 
+def _is_macos() -> bool:
+    # A function boundary on purpose: mypy narrows literal `sys.platform` comparisons by the
+    # analysis platform, which makes the other OS's branch "unreachable" under
+    # warn_unreachable (breaks lint on Linux CI). Runtime behavior is identical.
+    return sys.platform == "darwin"
+
+
 def _launchctl(args: list[str], runner: Runner = subprocess.run) -> tuple[int, str]:
     proc = runner(["launchctl", *args], capture_output=True, text=True, timeout=30)
     out = f"{proc.stdout or ''}{proc.stderr or ''}".strip()
@@ -60,7 +67,7 @@ def _launchctl(args: list[str], runner: Runner = subprocess.run) -> tuple[int, s
 
 
 def install(config: Config, runner: Runner = subprocess.run) -> tuple[bool, str]:
-    if sys.platform != "darwin":
+    if not _is_macos():
         line = f"{config.maintenance.minute} {config.maintenance.hour} * * * sup-mem maintain"
         return False, f"launchd is macOS-only; add this crontab line instead:\n  {line}"
     path = plist_path()
@@ -77,7 +84,7 @@ def install(config: Config, runner: Runner = subprocess.run) -> tuple[bool, str]
 
 
 def uninstall(runner: Runner = subprocess.run) -> tuple[bool, str]:
-    if sys.platform != "darwin":
+    if not _is_macos():
         return False, "launchd is macOS-only; remove your crontab line instead."
     _launchctl(["bootout", f"gui/{os.getuid()}/{LABEL}"], runner)  # ok to fail if not loaded
     path = plist_path()
@@ -88,7 +95,7 @@ def uninstall(runner: Runner = subprocess.run) -> tuple[bool, str]:
 
 
 def loaded(runner: Runner = subprocess.run) -> bool:
-    if sys.platform != "darwin":
+    if not _is_macos():
         return False
     code, _ = _launchctl(["print", f"gui/{os.getuid()}/{LABEL}"], runner)
     return code == 0

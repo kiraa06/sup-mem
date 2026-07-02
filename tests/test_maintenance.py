@@ -180,7 +180,7 @@ def test_service_install_writes_plist_and_bootstraps(
 ) -> None:
     plist = tmp_path / "com.sup-mem.maintain.plist"
     monkeypatch.setattr(service, "plist_path", lambda: plist)
-    monkeypatch.setattr(service.sys, "platform", "darwin")
+    monkeypatch.setattr(service, "_is_macos", lambda: True)
     calls: list[list[str]] = []
 
     ok, message = service.install(config, runner=_fake_runner(calls))
@@ -196,7 +196,7 @@ def test_service_install_writes_plist_and_bootstraps(
 def test_service_install_non_darwin_suggests_cron(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(service.sys, "platform", "linux")
+    monkeypatch.setattr(service, "_is_macos", lambda: False)
     ok, message = service.install(config, runner=_fake_runner([]))
     assert not ok and "crontab" in message
     assert "30 3 * * *" in message
