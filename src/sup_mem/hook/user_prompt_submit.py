@@ -89,9 +89,21 @@ def _retrieve(prompt: str, config: Config) -> tuple[list[Hit], list[Hit]]:
     return injected, pool
 
 
-def _format_hits(hits: list[Hit]) -> str:
+def _clip(text: str, limit: int) -> str:
+    """Cap a memory's injected size (word-boundary cut + a recall pointer). 0 = unlimited.
+
+    Long memories were the main context cost (~1k tokens each): inject the head as a scent
+    trail; the full text stays one explicit `recall` away.
+    """
+    if limit <= 0 or len(text) <= limit:
+        return text
+    head = text[:limit].rsplit(None, 1)[0]
+    return f"{head} … (truncated — use recall for the full memory)"
+
+
+def _format_hits(hits: list[Hit], max_chars: int) -> str:
     lines = [_MEMORY_HEADER]
-    lines.extend(f"- {hit.text}  (relevance {hit.score:.2f})" for hit in hits)
+    lines.extend(f"- {_clip(hit.text, max_chars)}  (relevance {hit.score:.2f})" for hit in hits)
     return "\n".join(lines)
 
 
@@ -114,6 +126,14 @@ def _log(
         from datetime import UTC, datetime
 
         injected_ids = {h.id for h in hits}
+        # Token estimates reflect what injection actually costs post-clip, so roi/tune
+        # arithmetic stays honest about the real context spend.
+        clip = config.retrieval.max_inject_chars
+
+        def _est(text: str) -> int:
+            effective = min(len(text), clip) if clip > 0 else len(text)
+            return max(1, effective // 4)
+
         record = {
             "ts": datetime.now(UTC).isoformat(),
             "session_id": session_id,
@@ -122,7 +142,7 @@ def _log(
             "injected_ids": [h.id for h in hits],
             "scores": [round(h.score, 4) for h in hits],
             "candidates": [
-                [h.id, round(h.score, 4), int(h.id in injected_ids), max(1, len(h.text) // 4)]
+                [h.id, round(h.score, 4), int(h.id in injected_ids), _est(h.text)]
                 for h in (pool if pool is not None else hits)
             ],
         }
@@ -170,7 +190,7 @@ def main() -> int:
     except Exception:
         hits, pool = [], []
     if hits:
-        parts.append(_format_hits(hits))
+        parts.append(_format_hits(hits, config.retrieval.max_inject_chars))
 
     _emit(parts)
     _log(config, prompt, hits, "retrieve", session_id, pool)

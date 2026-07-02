@@ -128,6 +128,63 @@ def test_fail_open_when_backend_search_raises(
     assert out.strip() == ""  # no pinned + retrieval failed silently → nothing injected
 
 
+# --- Injection clipping (max_inject_chars) -------------------------------------------------
+def test_long_memory_is_clipped_with_recall_pointer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], data_dir: Path
+) -> None:
+    b = get_backend(_cfg(data_dir))
+    b.store(
+        "The renewal pipeline for certificates rotates every node sequentially. " * 40,
+        {"source": "s1"},
+    )
+    b.close()
+    monkeypatch.setenv("SUP_MEM_RETRIEVAL_MAX_INJECT_CHARS", "200")
+    rc, out = _run_main(
+        "how does the certificate renewal pipeline rotate nodes?", monkeypatch, capsys, data_dir
+    )
+    assert rc == 0
+    assert "truncated — use recall" in out
+    memory_line = next(line for line in out.splitlines() if "renewal pipeline" in line)
+    assert len(memory_line) < 350  # 200-char clip + marker + score, nowhere near the full text
+
+
+def test_clip_zero_means_unlimited(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], data_dir: Path
+) -> None:
+    long_text = "The renewal pipeline for certificates rotates nodes. " * 30
+    b = get_backend(_cfg(data_dir))
+    b.store(long_text, {"source": "s1"})
+    b.close()
+    monkeypatch.setenv("SUP_MEM_RETRIEVAL_MAX_INJECT_CHARS", "0")
+    rc, out = _run_main(
+        "how does the certificate renewal pipeline work?", monkeypatch, capsys, data_dir
+    )
+    assert rc == 0
+    assert "truncated" not in out
+    assert long_text.strip() in out
+
+
+def test_logged_token_estimate_reflects_clip(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], data_dir: Path
+) -> None:
+    import json as _json
+
+    b = get_backend(_cfg(data_dir))
+    b.store("certificate renewal rotates nodes " * 100, {"source": "s1"})  # ~3400 chars
+    b.close()
+    # _run_main disables the retrieval log; this test needs it on, so drive main() directly.
+    monkeypatch.setenv("SUP_MEM_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SUP_MEM_RETRIEVAL_MAX_INJECT_CHARS", "400")
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO(json.dumps({"prompt": "certificate renewal nodes rotation"}))
+    )
+    assert hook.main() == 0
+    capsys.readouterr()
+    entry = _json.loads((data_dir / "retrieval.jsonl").read_text().splitlines()[-1])
+    tokens = [c[3] for c in entry["candidates"]]
+    assert tokens and all(t <= 100 for t in tokens)  # 400 chars // 4, not the ~850 full estimate
+
+
 # --- Lazy import on the skip path (§11.2, build-breaking if it regresses) -----------------
 def test_skip_path_imports_nothing_heavy(tmp_path: Path) -> None:
     script = (

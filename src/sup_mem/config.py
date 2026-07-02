@@ -25,8 +25,11 @@ DEFAULT_DATA_DIR = Path.home() / ".sup-mem"
 
 @dataclass
 class RetrievalConfig:
-    k: int = 6
+    k: int = 3
     threshold: float = 0.35  # a dial to tune on your own data; see retrieval logging (§8)
+    # Per-memory injection cap for the HOOK (chars; 0 = unlimited). Long memories inject a
+    # clipped head + a "use recall" tail; explicit `recall` always serves the full text.
+    max_inject_chars: int = 600
 
 
 @dataclass
@@ -382,6 +385,7 @@ backend = "{c.backend}"   # "sqlite_fts" (default, no deps) | "qdrant" (vector) 
 [retrieval]
 k = {c.retrieval.k}              # max memories injected/returned per query
 threshold = {c.retrieval.threshold}      # 0..1 relevance gate; tune with the retrieval log
+max_inject_chars = {c.retrieval.max_inject_chars}   # per-memory hook clip; 0 = unlimited
 
 [tier1]
 # Skip-gate ONLY — never decides whether a relevant memory exists (I3). A turn is skipped iff
