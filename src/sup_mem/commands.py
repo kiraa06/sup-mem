@@ -171,12 +171,12 @@ def cmd_tune(config: Config, *, apply: bool = False) -> int:
     from rich.console import Console
     from rich.table import Table
 
-    from sup_mem.ledger import Ledger
+    from sup_mem.ledger import Ledger, attributed_count, recommend_threshold, replay_thresholds
 
     console = Console()
     with Ledger(config.ledger_db_path) as ledger:
         turns = ledger.candidate_turns()
-    attributed = sum(1 for t in turns for c in t if c["injected"] and c["outcome"])
+    attributed = attributed_count(turns)
     if not turns or attributed == 0:
         console.print(
             "[yellow]Not enough outcome data yet.[/] Use Claude Code normally for a while — "
@@ -184,44 +184,9 @@ def cmd_tune(config: Config, *, apply: bool = False) -> int:
         )
         return 0
 
-    k = config.retrieval.k
     current = config.retrieval.threshold
-    grid = sorted({round(0.05 * i, 2) for i in range(1, 20)} | {round(current, 2)})
-
-    rows: list[dict[str, float]] = []
-    for theta in grid:
-        kept_ref = lost_ref = kept_ign = cut_ign = unknown_added = 0
-        tokens_total = 0
-        for turn in turns:
-            would = [c for c in turn if c["score"] >= theta][:k]
-            would_ids = {(c["memory_id"]) for c in would}
-            tokens_total += sum(c["tokens"] for c in would)
-            for cand in turn:
-                inj, outcome = bool(cand["injected"]), str(cand["outcome"])
-                in_would = cand["memory_id"] in would_ids
-                if inj and outcome in ("referenced", "contradicted"):
-                    kept_ref += in_would and outcome == "referenced"
-                    lost_ref += (not in_would) and outcome == "referenced"
-                elif inj and outcome == "ignored":
-                    kept_ign += in_would
-                    cut_ign += not in_would
-                elif not inj and in_would:
-                    unknown_added += 1  # below the live threshold then → outcome unknown (L4)
-        rows.append(
-            {
-                "theta": theta,
-                "kept_ref": kept_ref,
-                "lost_ref": lost_ref,
-                "kept_ign": kept_ign,
-                "cut_ign": cut_ign,
-                "unknown": unknown_added,
-                "tok_per_turn": tokens_total / max(len(turns), 1),
-            }
-        )
-
-    # Recommend the highest threshold that loses zero referenced injections.
-    keepers = [r for r in rows if r["lost_ref"] == 0]
-    recommended = max(keepers, key=lambda r: r["theta"])["theta"] if keepers else current
+    rows = replay_thresholds(turns, config.retrieval.k, current)
+    recommended = recommend_threshold(rows, current)
 
     table = Table(title=f"sup-mem tune — {len(turns)} logged turns, {attributed} attributed")
     for col in ("θ", "ref kept", "ref lost", "ign kept", "ign cut", "unknown+", "tok/turn"):
@@ -328,6 +293,84 @@ def cmd_roi(config: Config) -> int:
         f"{totals['ignored']} ignored, {totals['contradicted']} contradicted."
     )
     return 0
+
+
+def cmd_maintain(config: Config) -> int:
+    """Run all housekeeping steps (Phase 7); exit non-zero if any step failed."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from sup_mem.maintenance import run_maintenance
+
+    console = Console()
+    results = run_maintenance(config)
+
+    table = Table(title="sup-mem maintain")
+    table.add_column("step")
+    table.add_column("status")
+    table.add_column("detail", overflow="fold")
+    icon = {"ok": "[green]ok[/]", "skipped": "[dim]skipped[/]", "failed": "[red]FAILED[/]"}
+    for r in results:
+        table.add_row(r.name, icon.get(r.status, r.status), r.detail)
+    console.print(table)
+
+    failed = [r for r in results if r.status == "failed"]
+    if failed:
+        console.print(f"[red]{len(failed)} step(s) failed[/]")
+        return 1
+    return 0
+
+
+def cmd_status(
+    config: Config, *, claude_dir: Path | None = None, claude_json: Path | None = None
+) -> int:
+    """One-glance wiring check (Phase 7); exit non-zero if anything needs attention."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from sup_mem import __version__
+    from sup_mem.status import collect_checks
+
+    console = Console()
+    checks = collect_checks(config, claude_dir=claude_dir, claude_json=claude_json)
+
+    table = Table(title=f"sup-mem status — v{__version__} · {config.data_dir}")
+    table.add_column("check")
+    table.add_column("", justify="center")
+    table.add_column("detail", overflow="fold")
+    table.add_column("fix", overflow="fold")
+    for c in checks:
+        table.add_row(c.name, "[green]✓[/]" if c.ok else "[red]✗[/]", c.detail, c.fix)
+    console.print(table)
+
+    bad = [c for c in checks if not c.ok]
+    if bad:
+        console.print(f"[red]{len(bad)} check(s) need attention[/]")
+        return 1
+    console.print("[green]all wired[/]")
+    return 0
+
+
+def cmd_service(config: Config, action: str) -> int:
+    """Manage the launchd background service for `maintain` (Phase 7)."""
+    from rich.console import Console
+
+    from sup_mem import service
+
+    console = Console()
+    if action == "install":
+        ok, message = service.install(config)
+    elif action == "uninstall":
+        ok, message = service.uninstall()
+    else:  # status
+        is_loaded = service.loaded()
+        ok = True
+        message = (
+            f"{service.LABEL}: {'loaded' if is_loaded else 'not loaded'} "
+            f"(plist {'present' if service.plist_path().exists() else 'absent'})"
+        )
+    console.print(("[green]✓[/] " if ok else "[red]✗[/] ") + message)
+    return 0 if ok else 1
 
 
 PINNED_FACTS_TEMPLATE = """# Pinned facts (Tier 0 — injected into EVERY turn, verbatim)

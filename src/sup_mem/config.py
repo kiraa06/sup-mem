@@ -142,6 +142,19 @@ class LedgerConfig:
 
 
 @dataclass
+class MaintenanceConfig:
+    """Housekeeping run by `sup-mem maintain` (scheduled via `sup-mem service install`)."""
+
+    log_keep_days: int = 14  # retrieval.jsonl rotation window (ledger cursors are rebased)
+    backup_keep: int = 7  # timestamped store backups retained
+    auto_tune: bool = True  # apply tune recommendation only when lossless
+    tune_min_attributed: int = 20  # minimum attributed injections before auto-tune acts
+    notify: bool = True  # macOS notification when maintain finds problems
+    hour: int = 3  # launchd schedule
+    minute: int = 30
+
+
+@dataclass
 class Config:
     """Top-level, fully-resolved configuration."""
 
@@ -156,6 +169,7 @@ class Config:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     ledger: LedgerConfig = field(default_factory=LedgerConfig)
+    maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
 
     # --- Derived paths (never serialized) -------------------------------------------------
     @property
@@ -183,6 +197,19 @@ class Config:
     @property
     def manifest_cache_path(self) -> Path:
         return self.data_dir / "manifest.cache.json"
+
+    @property
+    def backups_dir(self) -> Path:
+        return self.data_dir / "backups"
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.data_dir / "logs"
+
+    @property
+    def maintain_stamp_path(self) -> Path:
+        """Timestamp of the last successful `maintain` run (surfaced by `status`)."""
+        return self.data_dir / "maintain.last"
 
 
 # --------------------------------------------------------------------------------------------
@@ -375,4 +402,14 @@ quarantine_contradictions = {c.ledger.quarantine_contradictions}
 min_overlap_tokens = {c.ledger.min_overlap_tokens}
 overlap_fraction = {c.ledger.overlap_fraction}
 correction_patterns = {_arr(c.ledger.correction_patterns)}
+
+[maintenance]
+# Housekeeping run by `sup-mem maintain`; schedule it with `sup-mem service install`.
+log_keep_days = {c.maintenance.log_keep_days}
+backup_keep = {c.maintenance.backup_keep}
+auto_tune = {_b(c.maintenance.auto_tune)}       # apply tune recommendation only when lossless
+tune_min_attributed = {c.maintenance.tune_min_attributed}
+notify = {_b(c.maintenance.notify)}
+hour = {c.maintenance.hour}                # launchd schedule (daily)
+minute = {c.maintenance.minute}
 """

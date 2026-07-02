@@ -69,6 +69,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser(
+        "maintain",
+        help="Housekeeping: rotate logs, back up stores, sweep native memory, lossless "
+        "auto-tune, refresh manifest, vacuum, health check.",
+    )
+    sub.add_parser("status", help="One-glance wiring check: hooks, MCP, store, ledger, service.")
+    p_service = sub.add_parser(
+        "service", help="Manage the daily launchd background service for `maintain`."
+    )
+    p_service.add_argument("action", choices=["install", "uninstall", "status"])
+
+    sub.add_parser(
         "doctor", help="Report backend/service health and enforce embedding-model consistency."
     )
     sub.add_parser("reindex", help="Re-embed the store with the current model (vector backends).")
@@ -101,6 +112,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return commands.cmd_tune(config, apply=args.apply)
     if args.command == "roi":
         return commands.cmd_roi(config)
+    if args.command == "maintain":
+        return commands.cmd_maintain(config)
+    if args.command == "status":
+        return commands.cmd_status(config)
+    if args.command == "service":
+        return commands.cmd_service(config, args.action)
     if args.command == "doctor":
         return commands.cmd_doctor(config)
     if args.command == "reindex":

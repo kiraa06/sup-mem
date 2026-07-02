@@ -63,6 +63,10 @@ every injected memory as **referenced** (the answer actually used it), **ignored
 All of it is advisory, fail-open, and off the hot path — the per-prompt cost is one indexed
 SQLite lookup. Spec: [docs/PHASE6-LOOP.md](docs/PHASE6-LOOP.md).
 
+**Install-and-forget:** `sup-mem service install` schedules daily housekeeping (log rotation,
+store backups with retention, native-memory sweep, *lossless-only* auto-tune, health check
+with a macOS notification on failure). `sup-mem status` shows the whole wiring at a glance.
+
 ---
 
 ## How it works — two front-doors, one backend
@@ -164,6 +168,9 @@ Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · 
 | `sup-mem migrate-native [--dry-run]` | Copy Claude Code's built-in file memories (`~/.claude/projects/*/memory`) into the store. Copy-only, idempotent — re-run anytime to pick up stragglers. |
 | `sup-mem tune [--apply]` | Counterfactual threshold replay against recorded outcomes; recommends (and optionally applies) a better threshold. |
 | `sup-mem roi` | Token P&L per memory: injections, tokens, referenced/ignored/contradicted, verdicts. |
+| `sup-mem status` | One-glance wiring check: hooks, MCP server, store, ledger activity, backups, service — with a fix command per red line. |
+| `sup-mem maintain` | Housekeeping: rotate the retrieval log (ledger cursors rebased), back up + vacuum the stores, sweep native memories, lossless auto-tune, health check. |
+| `sup-mem service install` | Schedule `maintain` daily via a macOS LaunchAgent (uninstall/status too). Non-macOS: prints the crontab line. |
 | `sup-mem doctor` | Backend/service health; enforce the model-consistency contract. |
 | `sup-mem reindex` | Re-embed the store with the current model (vector backends). |
 | `sup-mem serve` | Run the long-lived MCP server. |

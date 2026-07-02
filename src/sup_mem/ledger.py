@@ -118,6 +118,64 @@ def parse_transcript(path: Path) -> list[Turn]:
     return turns
 
 
+# --------------------------------------------------------------------------------------------
+# Counterfactual threshold replay (shared by `sup-mem tune` and maintain's auto-tune, L4)
+# --------------------------------------------------------------------------------------------
+
+CandidateTurn = list[dict[str, Any]]
+
+
+def attributed_count(turns: list[CandidateTurn]) -> int:
+    return sum(1 for turn in turns for c in turn if c["injected"] and c["outcome"])
+
+
+def replay_thresholds(turns: list[CandidateTurn], k: int, current: float) -> list[dict[str, float]]:
+    """Replay every logged turn at a grid of thresholds against recorded outcomes.
+
+    Honest by construction (L4): only injections that actually happened have outcomes;
+    candidates that were below the live threshold count as ``unknown`` when a lower
+    threshold would have injected them.
+    """
+    grid = sorted({round(0.05 * i, 2) for i in range(1, 20)} | {round(current, 2)})
+    rows: list[dict[str, float]] = []
+    for theta in grid:
+        kept_ref = lost_ref = kept_ign = cut_ign = unknown_added = 0
+        tokens_total = 0
+        for turn in turns:
+            would = [c for c in turn if c["score"] >= theta][:k]
+            would_ids = {c["memory_id"] for c in would}
+            tokens_total += sum(c["tokens"] for c in would)
+            for cand in turn:
+                inj, outcome = bool(cand["injected"]), str(cand["outcome"])
+                in_would = cand["memory_id"] in would_ids
+                if inj and outcome in ("referenced", "contradicted"):
+                    kept_ref += in_would and outcome == "referenced"
+                    lost_ref += (not in_would) and outcome == "referenced"
+                elif inj and outcome == "ignored":
+                    kept_ign += in_would
+                    cut_ign += not in_would
+                elif not inj and in_would:
+                    unknown_added += 1  # below the live threshold then → outcome unknown (L4)
+        rows.append(
+            {
+                "theta": theta,
+                "kept_ref": kept_ref,
+                "lost_ref": lost_ref,
+                "kept_ign": kept_ign,
+                "cut_ign": cut_ign,
+                "unknown": unknown_added,
+                "tok_per_turn": tokens_total / max(len(turns), 1),
+            }
+        )
+    return rows
+
+
+def recommend_threshold(rows: list[dict[str, float]], current: float) -> float:
+    """The highest threshold that loses zero referenced injections; else the current one."""
+    keepers = [r for r in rows if r["lost_ref"] == 0]
+    return float(max(keepers, key=lambda r: r["theta"])["theta"]) if keepers else current
+
+
 def _find_prompt_turn(turns: list[Turn], query: str) -> int:
     """Index of the user turn carrying this logged query (prefix match); -1 if not found."""
     needle = " ".join(query.split())[:200]
@@ -200,6 +258,28 @@ class Ledger:
         for row in rows:
             turns.setdefault((row["session_id"], row["line_no"]), []).append(dict(row))
         return list(turns.values())
+
+    def rebase_cursors(self, dropped_lines: list[int]) -> None:
+        """After retrieval-log rotation, shift each session cursor down by the number of
+        dropped line indexes below it, so cursors keep matching the rewritten file.
+
+        (Old ``candidates.line_no`` values keep their pre-rotation numbering — they are only
+        an idempotency key, never re-read from the file; a collision would need one session
+        to span a rotation by 80+ turns, and costs at most one skipped advisory row.)
+        """
+        if not dropped_lines:
+            return
+        import bisect
+
+        dropped = sorted(dropped_lines)
+        with self._lock, self._conn:
+            rows = self._conn.execute("SELECT session_id, log_line FROM cursors").fetchall()
+            for row in rows:
+                shift = bisect.bisect_left(dropped, int(row["log_line"]))
+                self._conn.execute(
+                    "UPDATE cursors SET log_line = ? WHERE session_id = ?",
+                    (max(int(row["log_line"]) - shift, 0), row["session_id"]),
+                )
 
     def pending_injected_ids(self, session_id: str) -> list[str]:
         """Memory ids injected this session that still await attribution."""
