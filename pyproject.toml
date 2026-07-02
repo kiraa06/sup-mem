@@ -37,9 +37,9 @@ sup-mem-hook-userprompt = "sup_mem.hook.user_prompt_submit:main"
 sup-mem-hook-session = "sup_mem.hook.session_start:main"
 
 [project.urls]
-Homepage = "https://github.com/kiranjose/sup-mem"
-Repository = "https://github.com/kiranjose/sup-mem"
-Issues = "https://github.com/kiranjose/sup-mem/issues"
+Homepage = "https://github.com/kiraa06/sup-mem"
+Repository = "https://github.com/kiraa06/sup-mem"
+Issues = "https://github.com/kiraa06/sup-mem/issues"
 
 [dependency-groups]
 dev = [

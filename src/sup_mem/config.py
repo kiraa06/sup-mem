@@ -285,7 +285,7 @@ def render_default_toml(config: Config | None = None) -> str:
     def _b(value: bool) -> str:
         return "true" if value else "false"
 
-    return f"""# sup-mem configuration — https://github.com/kiranjose/sup-mem
+    return f"""# sup-mem configuration — https://github.com/kiraa06/sup-mem
 # Precedence (low -> high): these defaults <- this file <- env (SUP_MEM_*) <- CLI flags.
 # Env mirrors nested keys, e.g. SUP_MEM_RETRIEVAL_THRESHOLD, SUP_MEM_QDRANT_HNSW_M.
 

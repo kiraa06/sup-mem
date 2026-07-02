@@ -1,11 +1,11 @@
 #!/bin/sh
 # sup-mem one-line installer (default path: SQLite FTS — no Docker, no model). I8.
 #
-#   curl -LsSf https://raw.githubusercontent.com/kiranjose/sup-mem/main/install.sh | sh
+#   curl -LsSf https://raw.githubusercontent.com/kiraa06/sup-mem/main/install.sh | sh
 #
 # Overrides:
 #   SUP_MEM_SPEC   pip/uv install spec (default: "sup-mem"). For an unpublished
-#                        checkout use e.g. "git+https://github.com/kiranjose/sup-mem".
+#                        checkout use e.g. "git+https://github.com/kiraa06/sup-mem".
 #   SUP_MEM_NO_INIT set to skip the automatic `sup-mem init`.
 set -eu
 

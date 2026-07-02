@@ -1,6 +1,6 @@
 # sup-mem
 
-[![CI](https://github.com/kiranjose/sup-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/kiranjose/sup-mem/actions/workflows/ci.yml)
+[![CI](https://github.com/kiraa06/sup-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/kiraa06/sup-mem/actions/workflows/ci.yml)
 
 **A self-hosted, pluggable global memory layer for Claude that persists context across sessions — model-free and Docker-free by default, with ultra-fast per-turn retrieval.**
 
@@ -21,7 +21,7 @@ Pick the row that matches your scale. **Most people should start with the defaul
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/\
-kiranjose/sup-mem/main/install.sh | sh
+kiraa06/sup-mem/main/install.sh | sh
 ```
 
 Zero services, zero models. Keyword (BM25) retrieval in a single embedded SQLite file. Ready in seconds.
