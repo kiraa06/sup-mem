@@ -42,9 +42,8 @@ def test_all_wired_reports_green(
     backend = get_backend(config)
     backend.store("a memory", {"source": "s"})
     backend.close()
-    plist = tmp_path / "plist"
-    plist.write_text("x")
-    monkeypatch.setattr(service, "plist_path", lambda: plist)
+    monkeypatch.setattr(service, "scheduler_kind", lambda: "launchd")
+    monkeypatch.setattr(service, "installed", lambda: True)
     monkeypatch.setattr(service, "loaded", lambda runner=None: True)
 
     checks = {
@@ -71,14 +70,15 @@ def test_missing_hook_is_flagged_with_fix(
     settings = json.loads((claude_dir / "settings.json").read_text())
     del settings["hooks"]["Stop"]  # simulate registration drift
     (claude_dir / "settings.json").write_text(json.dumps(settings))
-    monkeypatch.setattr(service, "plist_path", lambda: tmp_path / "absent")
+    monkeypatch.setattr(service, "scheduler_kind", lambda: "systemd")
+    monkeypatch.setattr(service, "installed", lambda: False)
 
     checks = {
         c.name: c for c in collect_checks(config, claude_dir=claude_dir, claude_json=claude_json)
     }
     assert not checks["hook:Stop"].ok
     assert "sup-mem init" in checks["hook:Stop"].fix
-    assert not checks["service"].ok  # plist absent → actionable
+    assert not checks["service"].ok  # scheduler available but nothing installed → actionable
 
     rc = commands.cmd_status(config, claude_dir=claude_dir, claude_json=claude_json)
     assert rc == 1
@@ -89,9 +89,11 @@ def test_registered_but_missing_binary_is_flagged(
 ) -> None:
     claude_dir, claude_json, binary = _wired_claude_dir(tmp_path)
     binary.unlink()  # MCP command now dangles
-    monkeypatch.setattr(service, "plist_path", lambda: tmp_path / "absent")
+    monkeypatch.setattr(service, "scheduler_kind", lambda: "none")
     checks = {
         c.name: c for c in collect_checks(config, claude_dir=claude_dir, claude_json=claude_json)
     }
     assert not checks["mcp:sup-mem"].ok
     assert "missing" in checks["mcp:sup-mem"].detail
+    assert checks["service"].ok  # no scheduler on this host → informational, not red
+    assert "cron" in checks["service"].detail

@@ -193,10 +193,57 @@ def test_service_install_writes_plist_and_bootstraps(
     assert any(c[1] == "bootout" for c in calls)
 
 
-def test_service_install_non_darwin_suggests_cron(
+def test_service_install_without_any_scheduler_suggests_cron(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(service, "_is_macos", lambda: False)
+    monkeypatch.setattr(service, "_is_linux", lambda: False)
     ok, message = service.install(config, runner=_fake_runner([]))
     assert not ok and "crontab" in message
     assert "30 3 * * *" in message
+
+
+# --- systemd (Linux) --------------------------------------------------------------------------
+def _force_systemd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    monkeypatch.setattr(service, "_is_macos", lambda: False)
+    monkeypatch.setattr(service, "_is_linux", lambda: True)
+    monkeypatch.setattr(service, "_has_systemctl", lambda: True)
+    unit_dir = tmp_path / "systemd-user"
+    monkeypatch.setattr(service, "systemd_dir", lambda: unit_dir)
+    return unit_dir
+
+
+def test_systemd_unit_contents(config: Config) -> None:
+    unit = service.render_systemd_service(config)
+    timer = service.render_systemd_timer(config)
+    assert "ExecStart=" in unit and unit.strip().endswith("maintain.log")
+    assert "Type=oneshot" in unit
+    assert "OnCalendar=*-*-* 03:30:00" in timer
+    assert "Persistent=true" in timer
+
+
+def test_systemd_install_writes_units_and_enables(
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit_dir = _force_systemd(monkeypatch, tmp_path)
+    calls: list[list[str]] = []
+    ok, message = service.install(config, runner=_fake_runner(calls))
+    assert ok, message
+    assert (unit_dir / "sup-mem-maintain.service").exists()
+    assert (unit_dir / "sup-mem-maintain.timer").exists()
+    assert ["systemctl", "--user", "daemon-reload"] in calls
+    assert any(c[:4] == ["systemctl", "--user", "enable", "--now"] for c in calls)
+
+    ok, message = service.uninstall(runner=_fake_runner(calls))
+    assert ok
+    assert not (unit_dir / "sup-mem-maintain.timer").exists()
+    assert not (unit_dir / "sup-mem-maintain.service").exists()
+    assert any(c[:4] == ["systemctl", "--user", "disable", "--now"] for c in calls)
+
+
+def test_systemd_loaded_reflects_is_active(
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _force_systemd(monkeypatch, tmp_path)
+    assert service.loaded(runner=_fake_runner([], returncode=0)) is True
+    assert service.loaded(runner=_fake_runner([], returncode=3)) is False

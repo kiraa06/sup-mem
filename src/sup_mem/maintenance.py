@@ -19,6 +19,7 @@ import json
 import shutil
 import sqlite3
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -222,19 +223,16 @@ def check_health(config: Config) -> StepResult:
     return _result("health", "ok", f"{health.get('backend')}: {health.get('count')} memories")
 
 
-def notify_macos(title: str, message: str) -> None:
-    """Best-effort user notification; silently does nothing off-macOS or on failure."""
+def notify_user(title: str, message: str) -> None:
+    """Best-effort desktop notification (macOS osascript / Linux notify-send); never raises."""
     with contextlib.suppress(Exception):
-        subprocess.run(
-            [
-                "osascript",
-                "-e",
-                f'display notification "{message}" with title "{title}"',
-            ],
-            capture_output=True,
-            timeout=10,
-            check=False,
-        )
+        if sys.platform == "darwin":
+            cmd = ["osascript", "-e", f'display notification "{message}" with title "{title}"']
+        elif shutil.which("notify-send"):
+            cmd = ["notify-send", "--urgency=critical", title, message]
+        else:
+            return  # headless box — the maintain.log still has the details
+        subprocess.run(cmd, capture_output=True, timeout=10, check=False)
 
 
 # --------------------------------------------------------------------------------------------
@@ -267,7 +265,7 @@ def run_maintenance(config: Config) -> list[StepResult]:
             )
     elif config.maintenance.notify:
         summary = "; ".join(f"{r.name}: {r.detail[:80]}" for r in failures)
-        notify_macos("sup-mem maintain", f"{len(failures)} step(s) failed — {summary}")
+        notify_user("sup-mem maintain", f"{len(failures)} step(s) failed — {summary}")
     return results
 
 

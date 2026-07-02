@@ -143,22 +143,31 @@ def collect_checks(
         )
     )
 
-    # 7) scheduled service
+    # 7) scheduled service (launchd on macOS, systemd user timer on Linux)
     try:
         from sup_mem import service
 
-        if service.plist_path().exists():
+        kind = service.scheduler_kind()
+        if kind == "none":
+            checks.append(
+                Check(
+                    "service",
+                    True,  # informational: no scheduler exists to install on this host
+                    "no launchd/systemd here — schedule `sup-mem maintain` via cron",
+                )
+            )
+        elif not service.installed():
+            checks.append(Check("service", False, "not installed", "run: sup-mem service install"))
+        else:
             is_loaded = service.loaded()
             checks.append(
                 Check(
                     "service",
                     is_loaded,
-                    "launchd loaded" if is_loaded else "plist present but not loaded",
+                    f"{kind} loaded" if is_loaded else f"{kind} installed but not active",
                     "" if is_loaded else "run: sup-mem service install",
                 )
             )
-        else:
-            checks.append(Check("service", False, "not installed", "run: sup-mem service install"))
     except Exception as exc:
         checks.append(Check("service", False, str(exc)))
 

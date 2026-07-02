@@ -65,7 +65,8 @@ SQLite lookup. Spec: [docs/PHASE6-LOOP.md](docs/PHASE6-LOOP.md).
 
 **Install-and-forget:** `sup-mem service install` schedules daily housekeeping (log rotation,
 store backups with retention, native-memory sweep, *lossless-only* auto-tune, health check
-with a macOS notification on failure). `sup-mem status` shows the whole wiring at a glance.
+with a desktop notification on failure) — launchd on macOS, a systemd user timer on Linux.
+`sup-mem status` shows the whole wiring at a glance.
 
 ---
 
@@ -170,7 +171,7 @@ Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · 
 | `sup-mem roi` | Token P&L per memory: injections, tokens, referenced/ignored/contradicted, verdicts. |
 | `sup-mem status` | One-glance wiring check: hooks, MCP server, store, ledger activity, backups, service — with a fix command per red line. |
 | `sup-mem maintain` | Housekeeping: rotate the retrieval log (ledger cursors rebased), back up + vacuum the stores, sweep native memories, lossless auto-tune, health check. |
-| `sup-mem service install` | Schedule `maintain` daily via a macOS LaunchAgent (uninstall/status too). Non-macOS: prints the crontab line. |
+| `sup-mem service install` | Schedule `maintain` daily — macOS LaunchAgent or Linux systemd user timer, auto-detected (uninstall/status too). No scheduler available: prints the crontab line. |
 | `sup-mem doctor` | Backend/service health; enforce the model-consistency contract. |
 | `sup-mem reindex` | Re-embed the store with the current model (vector backends). |
 | `sup-mem serve` | Run the long-lived MCP server. |
