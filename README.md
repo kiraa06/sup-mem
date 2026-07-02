@@ -72,7 +72,7 @@ brew tap kiraa06/sup-mem && brew install sup-mem && sup-mem init
 
 > **Which host?** `sup-mem init` auto-detects installed hosts (**Claude Code, Codex CLI, Gemini CLI**) and wires each — hooks + MCP server, non-clobbering, with a `.bak`. Scope it with `sup-mem init --client codex` (or `--client all`). The store also works from any other MCP client (Cursor, Zed, Claude Desktop) via the `sup-mem` MCP server; the outcome loop needs one of the three hooked hosts.
 >
-> ℹ️ **"Gemini CLI" means the `gemini` terminal command — not [Antigravity](https://antigravity.google), Google's agent IDE.** Antigravity has no per-prompt hook, so injection and the outcome loop can't run there; you can still register the `sup-mem` MCP server in its `mcp_config.json` by hand for tool-based `recall`/`remember`.
+> ℹ️ **"Gemini CLI" means the `gemini` terminal command — not [Antigravity](https://antigravity.google), Google's agent IDE.** Antigravity is a *separate* host with its own hooks (`~/.gemini/config/hooks.json`) and MCP (`mcp_config.json`); a first-class sup-mem adapter for it isn't shipped yet. For now, register the `sup-mem` MCP server in its `mcp_config.json` by hand for tool-based `recall`/`remember`.
 
 Then **restart the host(s)** (Claude Code / Codex / Gemini) so they load the new hook + MCP server.
 
