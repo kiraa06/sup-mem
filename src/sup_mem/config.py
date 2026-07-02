@@ -142,6 +142,19 @@ class LedgerConfig:
 
 
 @dataclass
+class ArchivalConfig:
+    """Evidence-based cold tier with size caps (docs/PHASE9-ARCHIVAL.md A1–A6)."""
+
+    enabled: bool = True
+    main_max_mb: float = 200.0  # main DB cap; over it, decay-tier pressure archival kicks in
+    archive_max_mb: float = 100.0  # archive cap; over it, FIFO PERMANENT deletion. 0 = never
+    superseded_after_days: int = 90  # structural tier: superseded versions past this move
+    quarantined_after_days: int = 60  # proven-harmful tier: stale quarantined memories move
+    decay_min_age_days: int = 30  # pressure tier: minimum age + reference-recency guard
+    keep_tag: str = "keep"  # hard opt-out tag — never archived by any regime
+
+
+@dataclass
 class ProvenanceConfig:
     """Tamper-evident write chain (docs/PHASE8-TEMPORAL.md T5). HMAC key at ~/.sup-mem/key."""
 
@@ -178,6 +191,7 @@ class Config:
     ledger: LedgerConfig = field(default_factory=LedgerConfig)
     maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
     provenance: ProvenanceConfig = field(default_factory=ProvenanceConfig)
+    archival: ArchivalConfig = field(default_factory=ArchivalConfig)
 
     # --- Derived paths (never serialized) -------------------------------------------------
     @property
@@ -223,6 +237,11 @@ class Config:
     def provenance_key_path(self) -> Path:
         """HMAC key for the provenance chain (T5). Losing it makes old chains unverifiable."""
         return self.data_dir / "key"
+
+    @property
+    def archive_db_path(self) -> Path:
+        """Cold tier for decayed/superseded versions (PHASE9)."""
+        return self.data_dir / "archive.db"
 
 
 # --------------------------------------------------------------------------------------------
@@ -430,4 +449,17 @@ minute = {c.maintenance.minute}
 # Tamper-evident write chain (docs/PHASE8-TEMPORAL.md): every store/supersede/revive joins an
 # HMAC hash chain keyed by ~/.sup-mem/key. Verify with `sup-mem verify` (also runs in maintain).
 enabled = {_b(c.provenance.enabled)}
+
+[archival]
+# Evidence-based cold tier with size caps (docs/PHASE9-ARCHIVAL.md). Steady state archives
+# superseded/quarantined versions; over main_max_mb the most-useless decayed memories move;
+# over archive_max_mb the OLDEST ARCHIVED ARE DELETED FOREVER (FIFO, chain-audited).
+# archive_max_mb = 0 disables permanent deletion entirely.
+enabled = {_b(c.archival.enabled)}
+main_max_mb = {c.archival.main_max_mb}
+archive_max_mb = {c.archival.archive_max_mb}
+superseded_after_days = {c.archival.superseded_after_days}
+quarantined_after_days = {c.archival.quarantined_after_days}
+decay_min_age_days = {c.archival.decay_min_age_days}
+keep_tag = "{c.archival.keep_tag}"
 """

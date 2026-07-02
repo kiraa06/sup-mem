@@ -413,6 +413,86 @@ def cmd_verify(config: Config, *, quiet: bool = False) -> int:
     return 1
 
 
+def cmd_archive(config: Config, *, dry_run: bool = False, list_mode: bool = False) -> int:
+    """Run the three archival regimes (PHASE9), or list the cold tier with --list."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from sup_mem.archival import run_archival
+
+    console = Console()
+    if list_mode:
+        from sup_mem.backends import get_backend
+
+        backend = get_backend(config)
+        try:
+            lister = getattr(backend, "archive_list", None)
+            entries = lister() if callable(lister) else []
+        finally:
+            backend.close()
+        if not entries:
+            console.print("archive tier is empty")
+            return 0
+        table = Table(title=f"sup-mem archive — {len(entries)} cold versions")
+        for col in ("id", "topic", "archived_at", "bytes"):
+            table.add_column(col)
+        for e in entries:
+            table.add_row(e["id"], e["topic"][:40], e["archived_at"][:19], str(e["bytes"]))
+        console.print(table)
+        console.print("restore any of these with: sup-mem restore <id>")
+        return 0
+
+    report = run_archival(config, dry_run=dry_run)
+    if not report["supported"]:
+        console.print(f"[yellow]![/] {report['note']}")
+        return 0
+
+    verb = "would move" if dry_run else "moved"
+    console.print(
+        f"steady tier (superseded/quarantined): {verb} {len(report['steady'])}"
+        + (f" — {', '.join(report['steady'][:5])}" if report["steady"] else "")
+    )
+    console.print(f"pressure tier (decay, most-useless first): {verb} {len(report['pressure'])}")
+    if report["purged"]:
+        console.print(
+            f"[red]purged FOREVER (archive over cap, FIFO): {len(report['purged'])}[/] — "
+            + ", ".join(f"{topic or mid}" for mid, topic in report["purged"][:5])
+        )
+    sizes = report.get("sizes_after") or report.get("sizes_before", {})
+    console.print(
+        f"tiers: main {sizes.get('main', 0) / 1048576:.2f} MB / "
+        f"{config.archival.main_max_mb} MB cap · archive "
+        f"{sizes.get('archive', 0) / 1048576:.2f} MB / {config.archival.archive_max_mb} MB cap"
+    )
+    if report["note"]:
+        console.print(f"[yellow]{report['note'].strip()}[/]")
+    return 0
+
+
+def cmd_restore(config: Config, memory_ids: list[str]) -> int:
+    """Move versions back from the cold tier to the hot store."""
+    from rich.console import Console
+
+    from sup_mem.backends import get_backend
+
+    console = Console()
+    backend = get_backend(config)
+    try:
+        restorer = getattr(backend, "restore_versions", None)
+        if not callable(restorer):
+            console.print("[yellow]![/] restore requires the sqlite_fts backend")
+            return 1
+        restored = restorer(memory_ids)
+    finally:
+        backend.close()
+    missing = len(memory_ids) - restored
+    console.print(
+        f"[green]✓[/] restored {restored} version(s) to the hot store"
+        + (f"; {missing} id(s) not found in the archive" if missing else "")
+    )
+    return 0 if restored or not memory_ids else 1
+
+
 def cmd_maintain(config: Config) -> int:
     """Run all housekeeping steps (Phase 7); exit non-zero if any step failed."""
     from rich.console import Console

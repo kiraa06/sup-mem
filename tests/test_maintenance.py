@@ -159,6 +159,7 @@ def test_run_maintenance_is_green_and_idempotent(
         "backup",
         "sweep",
         "auto-tune",
+        "archival",
         "manifest",
         "vacuum",
         "provenance",

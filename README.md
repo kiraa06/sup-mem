@@ -68,6 +68,13 @@ store backups with retention, native-memory sweep, *lossless-only* auto-tune, pr
 verification, health check with a desktop notification on failure) — launchd on macOS, a
 systemd user timer on Linux. `sup-mem status` shows the whole wiring at a glance.
 
+**Bounded by design:** two size caps (`[archival]` in config) keep the store honest forever.
+Over the main cap, the *most-useless* memories (ledger-proven: injected repeatedly, never
+referenced) move to a cold `archive.db` — still reachable by `--as-of`, `restore`, and the
+ledger. Over the archive cap, the oldest archived are deleted forever, FIFO, each deletion
+recorded in the provenance chain. Evidence decides, never age; `keep`-tagged memories are
+untouchable. Spec: [docs/PHASE9-ARCHIVAL.md](docs/PHASE9-ARCHIVAL.md).
+
 **Time travel + tamper evidence:** the store is append-only and versioned — a changed fact
 *supersedes* its predecessor instead of overwriting it, so
 `sup-mem recall --as-of 2026-06-01 "pod restart cause" --diff-now` answers *"what did we
@@ -179,6 +186,8 @@ Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · 
 | `sup-mem roi` | Token P&L per memory: injections, tokens, referenced/ignored/contradicted, verdicts. |
 | `sup-mem recall "q" [--as-of WHEN] [--diff-now]` | Search from the CLI; `--as-of` returns what the store believed at that instant (bitemporal, sqlite backend). |
 | `sup-mem verify` | Verify the tamper-evident provenance chain + row hashes; non-zero on any break. |
+| `sup-mem archive [--dry-run\|--list]` | Evidence-based cold tier: superseded/quarantined move on schedule; over `main_max_mb` the most-useless decayed memories move; over `archive_max_mb` the oldest archived are **deleted forever** (FIFO, chain-audited; `0` disables). |
+| `sup-mem restore <id…>` | Move archived versions back to the hot store, state intact. |
 | `sup-mem status` | One-glance wiring check: hooks, MCP server, store, ledger activity, backups, service — with a fix command per red line. |
 | `sup-mem maintain` | Housekeeping: rotate the retrieval log (ledger cursors rebased), back up + vacuum the stores, sweep native memories, lossless auto-tune, health check. |
 | `sup-mem service install` | Schedule `maintain` daily — macOS LaunchAgent or Linux systemd user timer, auto-detected (uninstall/status too). No scheduler available: prints the crontab line. |

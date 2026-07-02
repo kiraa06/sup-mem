@@ -175,6 +175,23 @@ def auto_tune(config: Config) -> StepResult:
 # --------------------------------------------------------------------------------------------
 # manifest + vacuum + health
 # --------------------------------------------------------------------------------------------
+def run_archival_step(config: Config) -> StepResult:
+    """Nightly archival (PHASE9): steady tiers always; pressure tiers when over the caps."""
+    if not config.archival.enabled:
+        return _result("archival", "skipped", "disabled in config")
+    from sup_mem.archival import run_archival
+
+    report = run_archival(config)
+    if not report["supported"]:
+        return _result("archival", "skipped", str(report["note"]))
+    moved = len(report["steady"]) + len(report["pressure"])
+    purged = len(report["purged"])
+    detail = f"{moved} archived ({len(report['steady'])} steady), {purged} purged"
+    if report["note"]:
+        detail += f"; {report['note'].strip()}"
+    return _result("archival", "ok", detail)
+
+
 def refresh_manifest(config: Config) -> StepResult:
     from sup_mem.backends import get_backend
     from sup_mem.manifest import build_manifest
@@ -260,9 +277,10 @@ def notify_user(title: str, message: str) -> None:
 # --------------------------------------------------------------------------------------------
 _STEPS = [
     rotate_log,
-    backup_stores,
+    backup_stores,  # pre-archival state is always in the latest snapshot
     sweep_native,
     auto_tune,
+    run_archival_step,
     refresh_manifest,
     vacuum_stores,
     check_provenance,

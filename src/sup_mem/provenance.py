@@ -26,7 +26,10 @@ from pathlib import Path
 from typing import Any
 
 GENESIS = "0" * 64
-EVENTS = ("stored", "superseded", "revived", "restated")
+# Content events set an id's expected hash; location events set where that hash must live.
+CONTENT_EVENTS = ("stored", "revived", "restated")
+LOCATION_EVENTS = ("archived", "restored", "purged")
+EVENTS = (*CONTENT_EVENTS, "superseded", *LOCATION_EVENTS)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS provenance (
@@ -157,12 +160,38 @@ class ProvenanceChain:
             "SELECT memory_id, event, payload_hash FROM provenance ORDER BY seq ASC"
         ).fetchall()
         for memory_id, event, digest in rows:
-            if event in ("stored", "revived", "restated"):
+            if event in CONTENT_EVENTS:
                 out[str(memory_id)] = str(digest)
         return out
 
-    def verify(self, row_hashes: dict[str, str]) -> dict[str, Any]:
-        """Walk the chain + cross-check current rows. ``row_hashes``: memory_id → live hash."""
+    def expected_state(self) -> dict[str, tuple[str, str]]:
+        """Replay the chain: memory_id → (expected_location, expected_hash).
+
+        Locations: ``main`` | ``archive`` | ``gone`` (purged). Content events update the
+        hash; location events update where it must be found (PHASE9 A4).
+        """
+        state: dict[str, tuple[str, str]] = {}
+        rows = self._conn.execute(
+            "SELECT memory_id, event, payload_hash FROM provenance ORDER BY seq ASC"
+        ).fetchall()
+        for memory_id, event, digest in rows:
+            mid = str(memory_id)
+            location, current = state.get(mid, ("main", ""))
+            if event in CONTENT_EVENTS:
+                state[mid] = ("main", str(digest))
+            elif event == "archived":
+                state[mid] = ("archive", current)
+            elif event == "restored":
+                state[mid] = ("main", current)
+            elif event == "purged":
+                state[mid] = ("gone", current)
+            # "superseded" carries the successor's hash — location/content unchanged.
+        return state
+
+    def verify(
+        self, row_hashes: dict[str, str], archive_hashes: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        """Walk the chain + cross-check rows in BOTH tiers against expected state (A4)."""
         key = self._get_key()
         prev = GENESIS
         events = 0
@@ -186,21 +215,30 @@ class ProvenanceChain:
             prev = str(record["entry_hash"])
             events += 1
 
-        expected = self.latest_payload_hashes()
-        mismatched = [mid for mid, digest in row_hashes.items() if expected.get(mid) != digest]
-        unrecorded = [mid for mid in row_hashes if mid not in expected]
-        if mismatched:
+        archive_hashes = archive_hashes or {}
+        problems: list[str] = []
+        expected = self.expected_state()
+        tiers = {"main": row_hashes, "archive": archive_hashes}
+        for mid, (location, digest) in expected.items():
+            if location == "gone":
+                if mid in row_hashes or mid in archive_hashes:
+                    problems.append(f"{mid} was purged but a row still exists")
+                continue
+            actual = tiers[location].get(mid)
+            other = "archive" if location == "main" else "main"
+            if actual is None:
+                where = " (found in the other tier)" if mid in tiers[other] else ""
+                problems.append(f"{mid} expected in {location} but missing{where}")
+            elif actual != digest:
+                problems.append(f"{mid} content differs from its provenance ({location})")
+        for mid in {**row_hashes, **archive_hashes}:
+            if mid not in expected:
+                problems.append(f"{mid} has no provenance events")
+        if problems:
             return {
                 "ok": False,
                 "events": events,
-                "reason": f"{len(mismatched)} memory row(s) differ from their provenance "
-                f"(edited outside sup-mem?): {', '.join(mismatched[:5])}",
-            }
-        if unrecorded:
-            return {
-                "ok": False,
-                "events": events,
-                "reason": f"{len(unrecorded)} memory row(s) have no provenance events: "
-                f"{', '.join(unrecorded[:5])}",
+                "reason": f"{len(problems)} inconsistencies (edited outside sup-mem?): "
+                + "; ".join(problems[:4]),
             }
         return {"ok": True, "events": events, "reason": ""}

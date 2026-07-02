@@ -118,6 +118,30 @@ def collect_checks(
     else:
         checks.append(Check("ledger", True, "empty (fills after a restart + normal use)"))
 
+    # 4b) archival tiers vs caps
+    try:
+        main_mb = config.db_path.stat().st_size / 1048576 if config.db_path.exists() else 0.0
+        archive_mb = (
+            config.archive_db_path.stat().st_size / 1048576
+            if config.archive_db_path.exists()
+            else 0.0
+        )
+        over_main = config.archival.main_max_mb > 0 and main_mb > config.archival.main_max_mb
+        over_archive = (
+            config.archival.archive_max_mb > 0 and archive_mb > config.archival.archive_max_mb
+        )
+        checks.append(
+            Check(
+                "tiers",
+                not (over_main or over_archive),
+                f"main {main_mb:.2f}/{config.archival.main_max_mb} MB · "
+                f"archive {archive_mb:.2f}/{config.archival.archive_max_mb} MB",
+                "run: sup-mem archive" if (over_main or over_archive) else "",
+            )
+        )
+    except Exception as exc:
+        checks.append(Check("tiers", False, str(exc)))
+
     # 5) retrieval log size
     log = config.retrieval_log_path
     if log.exists():

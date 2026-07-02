@@ -90,11 +90,14 @@ class SqliteFtsBackend(MemoryBackend):
         self._conn = sqlite3.connect(str(config.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._chain: ProvenanceChain | None = None
+        self._archive_attached = False
         self._init_schema()
         if config.provenance.enabled:
             with self._lock, self._conn:
                 self._chain = ProvenanceChain(self._conn, config.provenance_key_path)
                 self._genesis_events()
+        if config.archive_db_path.exists():
+            self._ensure_archive()  # cold tier participates in as-of/fetch when present
 
     # -- schema + migration -----------------------------------------------------------------
     def _columns(self, table: str) -> set[str]:
@@ -331,6 +334,22 @@ class SqliteFtsBackend(MemoryBackend):
             coverage = sum(1 for term in term_set if term in doc_terms) / n_terms
             score = coverage + (1.0 - coverage) * self._squash(float(row["rank"]))
             scored.append((score, -order, row))
+        # Temporal queries UNION the cold tier so archival never falsifies history (A3).
+        # Coverage-only scoring there (no FTS index on the archive); O(window) on a cold tier.
+        if as_of is not None and self._archive_attached:
+            archive_rows = self._conn.execute(
+                "SELECT id, text, metadata, lineage, recorded_at, superseded_at "
+                "FROM archive.memories WHERE recorded_at <= :asof "
+                "AND (superseded_at IS NULL OR superseded_at > :asof)",
+                {"asof": as_of},
+            ).fetchall()
+            base_order = len(rows)
+            for offset, row in enumerate(archive_rows):
+                doc_terms = set(_WORD_RE.findall(str(row["text"]).lower()))
+                coverage = sum(1 for term in term_set if term in doc_terms) / n_terms
+                if coverage > 0:
+                    scored.append((coverage, -(base_order + offset), row))
+
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
 
         hits: list[Hit] = []
@@ -351,14 +370,243 @@ class SqliteFtsBackend(MemoryBackend):
 
     def fetch(self, memory_ids: list[str]) -> dict[str, str]:
         # Deliberately unfiltered: the ledger attributes injections of now-superseded
-        # versions, so old texts must stay resolvable (T4).
+        # versions, so old texts must stay resolvable (T4) — including archived ones (A3).
         if not memory_ids:
             return {}
         marks = ",".join("?" for _ in memory_ids)
         rows = self._conn.execute(
             f"SELECT id, text FROM memories WHERE id IN ({marks})", memory_ids
         ).fetchall()
-        return {str(row["id"]): str(row["text"]) for row in rows}
+        found = {str(row["id"]): str(row["text"]) for row in rows}
+        missing = [mid for mid in memory_ids if mid not in found]
+        if missing and self._archive_attached:
+            marks = ",".join("?" for _ in missing)
+            rows = self._conn.execute(
+                f"SELECT id, text FROM archive.memories WHERE id IN ({marks})", missing
+            ).fetchall()
+            found.update({str(row["id"]): str(row["text"]) for row in rows})
+        return found
+
+    # -- archival: cold tier with size caps (docs/PHASE9-ARCHIVAL.md) -----------------------
+    def _ensure_archive(self) -> None:
+        if self._archive_attached:
+            return
+        self._conn.execute("ATTACH DATABASE ? AS archive", (str(self._config.archive_db_path),))
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS archive.memories (
+                id            TEXT PRIMARY KEY,
+                lineage       TEXT NOT NULL,
+                text          TEXT NOT NULL,
+                metadata      TEXT NOT NULL DEFAULT '{}',
+                source        TEXT NOT NULL DEFAULT '',
+                valid_from    TEXT NOT NULL DEFAULT '',
+                recorded_at   TEXT NOT NULL DEFAULT '',
+                superseded_at TEXT,
+                updated_at    TEXT NOT NULL DEFAULT '',
+                archived_at   TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS archive.idx_archive_fifo ON memories (archived_at);
+            """
+        )
+        self._archive_attached = True
+
+    def db_sizes(self) -> dict[str, int]:
+        """Bytes on disk per tier, post-checkpoint (A6)."""
+        import os
+
+        with self._lock, self._conn:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        main = os.path.getsize(self._config.db_path) if self._config.db_path.exists() else 0
+        archive_path = self._config.archive_db_path
+        archive = os.path.getsize(archive_path) if archive_path.exists() else 0
+        return {"main": main, "archive": archive}
+
+    def compact(self) -> None:
+        with self._lock:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._conn.execute("VACUUM")
+            if self._archive_attached:
+                self._conn.execute("VACUUM archive")
+
+    def superseded_before(self, cutoff_iso: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT id FROM memories WHERE superseded_at IS NOT NULL AND superseded_at < ?",
+            (cutoff_iso,),
+        ).fetchall()
+        return [str(row["id"]) for row in rows]
+
+    def live_candidates(self, recorded_before: str, keep_tag: str) -> list[dict[str, Any]]:
+        """Live versions old enough for pressure archival, minus keep-tagged ones (A1)."""
+        rows = self._conn.execute(
+            "SELECT id, recorded_at, metadata, LENGTH(text) AS bytes FROM memories "
+            "WHERE superseded_at IS NULL AND recorded_at < ?",
+            (recorded_before,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            meta = _load_meta(row["metadata"])
+            tags = meta.get("tags", [])
+            if isinstance(tags, str):
+                tags = [t.strip() for t in tags.split(",")]
+            if keep_tag and keep_tag in [str(t) for t in tags]:
+                continue
+            out.append(
+                {
+                    "id": str(row["id"]),
+                    "recorded_at": str(row["recorded_at"]),
+                    "bytes": int(row["bytes"]),
+                }
+            )
+        return out
+
+    def archive_versions(self, memory_ids: list[str]) -> list[str]:
+        """Move versions to the cold tier (A3). Returns the ids that actually moved."""
+        if not memory_ids:
+            return []
+        self._ensure_archive()
+        now = _now_iso()
+        moved: list[str] = []
+        with self._lock, self._conn:
+            for mem_id in memory_ids:
+                row = self._conn.execute(
+                    "SELECT * FROM memories WHERE id = ?", (mem_id,)
+                ).fetchone()
+                if row is None:
+                    continue
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO archive.memories "
+                    "(id, lineage, text, metadata, source, valid_from, recorded_at, "
+                    " superseded_at, updated_at, archived_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        *[
+                            row[k]
+                            for k in (
+                                "id",
+                                "lineage",
+                                "text",
+                                "metadata",
+                                "source",
+                                "valid_from",
+                                "recorded_at",
+                                "superseded_at",
+                                "updated_at",
+                            )
+                        ],
+                        now,
+                    ),
+                )
+                self._conn.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
+                self._append_event(
+                    "archived",
+                    memory_id=str(row["id"]),
+                    lineage=str(row["lineage"]),
+                    source=str(row["source"]),
+                    ts=now,
+                    payload=payload_hash(str(row["text"]), _load_meta(row["metadata"])),
+                )
+                moved.append(mem_id)
+        return moved
+
+    def restore_versions(self, memory_ids: list[str]) -> int:
+        """Move versions back from the cold tier, state intact (A3)."""
+        if not memory_ids or not self._config.archive_db_path.exists():
+            return 0
+        self._ensure_archive()
+        now = _now_iso()
+        restored = 0
+        with self._lock, self._conn:
+            for mem_id in memory_ids:
+                row = self._conn.execute(
+                    "SELECT * FROM archive.memories WHERE id = ?", (mem_id,)
+                ).fetchone()
+                if row is None:
+                    continue
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO memories "
+                    "(id, lineage, text, metadata, source, valid_from, recorded_at, "
+                    " superseded_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(
+                        row[k]
+                        for k in (
+                            "id",
+                            "lineage",
+                            "text",
+                            "metadata",
+                            "source",
+                            "valid_from",
+                            "recorded_at",
+                            "superseded_at",
+                            "updated_at",
+                        )
+                    ),
+                )
+                self._conn.execute("DELETE FROM archive.memories WHERE id = ?", (mem_id,))
+                self._append_event(
+                    "restored",
+                    memory_id=str(row["id"]),
+                    lineage=str(row["lineage"]),
+                    source=str(row["source"]),
+                    ts=now,
+                    payload=payload_hash(str(row["text"]), _load_meta(row["metadata"])),
+                )
+                restored += 1
+        return restored
+
+    def purge_archive_fifo(self, max_bytes: int) -> list[tuple[str, str]]:
+        """PERMANENTLY delete oldest-archived rows until the archive fits (A2 regime 3).
+
+        Every deletion is chain-audited as a `purged` event carrying the final content hash.
+        Returns (id, topic) of everything purged.
+        """
+        if max_bytes <= 0 or not self._config.archive_db_path.exists():
+            return []
+        self._ensure_archive()
+        purged: list[tuple[str, str]] = []
+        while self.db_sizes()["archive"] > max_bytes:
+            rows = self._conn.execute(
+                "SELECT * FROM archive.memories ORDER BY archived_at ASC, id ASC LIMIT 25"
+            ).fetchall()
+            if not rows:
+                break
+            now = _now_iso()
+            with self._lock, self._conn:
+                for row in rows:
+                    meta = _load_meta(row["metadata"])
+                    self._append_event(
+                        "purged",
+                        memory_id=str(row["id"]),
+                        lineage=str(row["lineage"]),
+                        source=str(row["source"]),
+                        ts=now,
+                        payload=payload_hash(str(row["text"]), meta),
+                    )
+                    self._conn.execute(
+                        "DELETE FROM archive.memories WHERE id = ?", (str(row["id"]),)
+                    )
+                    purged.append((str(row["id"]), str(meta.get("topic", ""))))
+            with self._lock:
+                self._conn.execute("VACUUM archive")
+        return purged
+
+    def archive_list(self) -> list[dict[str, Any]]:
+        if not self._config.archive_db_path.exists():
+            return []
+        self._ensure_archive()
+        rows = self._conn.execute(
+            "SELECT id, metadata, archived_at, LENGTH(text) AS bytes "
+            "FROM archive.memories ORDER BY archived_at DESC"
+        ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "topic": str(_load_meta(row["metadata"]).get("topic", "")),
+                "archived_at": str(row["archived_at"]),
+                "bytes": int(row["bytes"]),
+            }
+            for row in rows
+        ]
 
     def current_versions(self, lineages: list[str]) -> dict[str, dict[str, str]]:
         """Live version per lineage (for the recall CLI's --diff-now)."""
@@ -421,14 +669,20 @@ class SqliteFtsBackend(MemoryBackend):
         }
 
     def verify_provenance(self) -> dict[str, Any]:
-        """Chain + row-hash verification (T5). See `sup-mem verify`."""
+        """Chain + row-hash verification across BOTH tiers (T5, A4). See `sup-mem verify`."""
         if self._chain is None:
             return {"ok": True, "events": 0, "reason": "provenance disabled in config"}
         row_hashes: dict[str, str] = {}
         for row in self._conn.execute("SELECT id, text, metadata FROM memories"):
             row_hashes[str(row["id"])] = payload_hash(str(row["text"]), _load_meta(row["metadata"]))
+        archive_hashes: dict[str, str] = {}
+        if self._archive_attached:
+            for row in self._conn.execute("SELECT id, text, metadata FROM archive.memories"):
+                archive_hashes[str(row["id"])] = payload_hash(
+                    str(row["text"]), _load_meta(row["metadata"])
+                )
         with self._lock:
-            return self._chain.verify(row_hashes)
+            return self._chain.verify(row_hashes, archive_hashes)
 
     def reindex(self, progress: ProgressCallback | None = None) -> None:
         """No-op semantically for a lexical store; we rebuild the FTS index defensively (§6.2)."""

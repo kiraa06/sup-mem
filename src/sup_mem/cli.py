@@ -77,6 +77,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verify the tamper-evident provenance chain and memory row hashes.",
     )
 
+    p_archive = sub.add_parser(
+        "archive",
+        help="Move decayed/superseded memories to the cold tier; enforce the size caps "
+        "(over archive cap: OLDEST ARCHIVED ARE DELETED FOREVER, FIFO).",
+    )
+    p_archive.add_argument("--dry-run", action="store_true", help="Report without moving.")
+    p_archive.add_argument("--list", action="store_true", help="List the archive tier.")
+
+    p_restore = sub.add_parser("restore", help="Move archived versions back to the hot store.")
+    p_restore.add_argument("ids", nargs="+", help="Memory ids (see `sup-mem archive --list`).")
+
     p_tune = sub.add_parser(
         "tune",
         help="Counterfactually replay logged retrievals against recorded outcomes and "
@@ -138,6 +149,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "verify":
         return commands.cmd_verify(config)
+    if args.command == "archive":
+        return commands.cmd_archive(config, dry_run=args.dry_run, list_mode=args.list)
+    if args.command == "restore":
+        return commands.cmd_restore(config, args.ids)
     if args.command == "tune":
         return commands.cmd_tune(config, apply=args.apply)
     if args.command == "roi":
