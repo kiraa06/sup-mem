@@ -1,0 +1,140 @@
+"""Outcome-reinforced ranking + tune + roi (PHASE6 acceptance 2/3/4)."""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+
+from sup_mem import commands
+from sup_mem.config import Config
+from sup_mem.models import Hit
+from sup_mem.ranking import adjust
+
+
+def _seed_stats(db: Path, rows: list[tuple[str, int, int, int, int]]) -> None:
+    """(memory_id, injected, referenced, ignored, contradicted) — creates schema via Ledger."""
+    from sup_mem.ledger import Ledger
+
+    Ledger(db).close()  # ensure schema
+    conn = sqlite3.connect(str(db))
+    with conn:
+        for mem_id, injected, referenced, ignored, contradicted in rows:
+            conn.execute(
+                "INSERT INTO stats (memory_id, injected, referenced, ignored, contradicted) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (mem_id, injected, referenced, ignored, contradicted),
+            )
+    conn.close()
+
+
+def _seed_candidates(db: Path, turns: list[list[tuple[str, float, int, str, int]]]) -> None:
+    """Each turn: [(memory_id, score, injected, outcome, tokens)] on its own line_no."""
+    from sup_mem.ledger import Ledger
+
+    Ledger(db).close()
+    conn = sqlite3.connect(str(db))
+    with conn:
+        for line_no, turn in enumerate(turns):
+            for mem_id, score, injected, outcome, tokens in turn:
+                conn.execute(
+                    "INSERT INTO candidates "
+                    "(session_id, line_no, memory_id, score, injected, outcome, tokens) "
+                    "VALUES ('s', ?, ?, ?, ?, ?, ?)",
+                    (line_no, mem_id, score, injected, outcome, tokens),
+                )
+    conn.close()
+
+
+# --- ranking (acceptance 2) ----------------------------------------------------------------
+def test_referenced_outranks_ignored_at_equal_base(config: Config) -> None:
+    _seed_stats(config.ledger_db_path, [("good", 3, 3, 0, 0), ("noise", 3, 0, 3, 0)])
+    hits = [Hit("noise", "n", 0.50), Hit("good", "g", 0.50)]
+    out = adjust(hits, config)
+    assert [h.id for h in out] == ["good", "noise"]
+    assert out[0].score > 0.50 and all(0.0 <= h.score <= 1.0 for h in out)
+    assert out[1].score == 0.50  # ignored gets no negative boost — only contradictions demote
+
+
+def test_quarantined_memory_is_dropped(config: Config) -> None:
+    _seed_stats(config.ledger_db_path, [("bad", 4, 0, 1, 3)])
+    out = adjust([Hit("bad", "b", 0.9), Hit("fresh", "f", 0.4)], config)
+    assert [h.id for h in out] == ["fresh"]
+
+
+def test_disabled_ledger_is_passthrough(make_config: Callable[..., Config]) -> None:
+    cfg = make_config(ledger={"enabled": False})
+    _seed_stats(cfg.ledger_db_path, [("good", 3, 3, 0, 0)])
+    hits = [Hit("x", "x", 0.4), Hit("good", "g", 0.3)]
+    assert adjust(hits, cfg) == hits
+
+
+def test_missing_ledger_fails_open(config: Config) -> None:
+    hits = [Hit("a", "a", 0.5)]
+    assert adjust(hits, config) == hits  # no ledger.db on disk → unchanged
+
+
+# --- tune (acceptance 3) -------------------------------------------------------------------
+def test_tune_recommends_highest_lossless_threshold(
+    config: Config, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_candidates(
+        config.ledger_db_path,
+        [
+            [
+                ("a", 0.80, 1, "referenced", 30),
+                ("b", 0.40, 1, "ignored", 25),
+                ("c", 0.20, 0, "", 10),
+            ],
+            [("a", 0.75, 1, "referenced", 30), ("d", 0.45, 1, "ignored", 40)],
+        ],
+    )
+    assert commands.cmd_tune(config) == 0
+    out = capsys.readouterr().out
+    assert "0.75" in out and "★rec" in out  # highest θ keeping both referenced injections
+    assert "unknown" in out.lower()  # L4 honesty is surfaced
+
+
+def test_tune_apply_writes_config(config: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_candidates(config.ledger_db_path, [[("a", 0.80, 1, "referenced", 30)]])
+    assert commands.cmd_tune(config, apply=True) == 0
+    text = config.config_path.read_text(encoding="utf-8")
+    assert "threshold = 0.8" in text
+
+    from sup_mem.config import load_config
+
+    reloaded = load_config(overrides={"data_dir": str(config.data_dir)})
+    assert reloaded.retrieval.threshold == 0.8
+
+
+def test_tune_without_data_is_friendly(config: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert commands.cmd_tune(config) == 0
+    assert "not enough outcome data" in capsys.readouterr().out.lower()
+
+
+# --- roi (acceptance 4) ----------------------------------------------------------------------
+def test_roi_totals_match_ledger(config: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    from sup_mem.backends import get_backend
+
+    backend = get_backend(config)
+    mem_id = backend.store("the canonical deploy pipeline notes", {"source": "s"})
+    backend.close()
+    _seed_stats(config.ledger_db_path, [(mem_id, 5, 2, 3, 0), ("gone", 4, 0, 4, 0)])
+
+    conn = sqlite3.connect(str(config.ledger_db_path))
+    with conn:
+        conn.execute("UPDATE stats SET tokens = 120 WHERE memory_id = ?", (mem_id,))
+    conn.close()
+
+    assert commands.cmd_roi(config) == 0
+    out = capsys.readouterr().out
+    assert "9 injections" in out  # 5 + 4
+    assert "2 referenced" in out
+    assert "valuable" in out and "wasteful" in out
+
+
+def test_roi_without_data_is_friendly(config: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert commands.cmd_roi(config) == 0
+    assert "no outcome data" in capsys.readouterr().out.lower()

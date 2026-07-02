@@ -166,6 +166,170 @@ def cmd_migrate_native(
     return 0
 
 
+def cmd_tune(config: Config, *, apply: bool = False) -> int:
+    """Counterfactual threshold replay against recorded outcomes (PHASE6, honest per L4)."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from sup_mem.ledger import Ledger
+
+    console = Console()
+    with Ledger(config.ledger_db_path) as ledger:
+        turns = ledger.candidate_turns()
+    attributed = sum(1 for t in turns for c in t if c["injected"] and c["outcome"])
+    if not turns or attributed == 0:
+        console.print(
+            "[yellow]Not enough outcome data yet.[/] Use Claude Code normally for a while — "
+            "the Stop hook records whether injected memories get referenced — then re-run."
+        )
+        return 0
+
+    k = config.retrieval.k
+    current = config.retrieval.threshold
+    grid = sorted({round(0.05 * i, 2) for i in range(1, 20)} | {round(current, 2)})
+
+    rows: list[dict[str, float]] = []
+    for theta in grid:
+        kept_ref = lost_ref = kept_ign = cut_ign = unknown_added = 0
+        tokens_total = 0
+        for turn in turns:
+            would = [c for c in turn if c["score"] >= theta][:k]
+            would_ids = {(c["memory_id"]) for c in would}
+            tokens_total += sum(c["tokens"] for c in would)
+            for cand in turn:
+                inj, outcome = bool(cand["injected"]), str(cand["outcome"])
+                in_would = cand["memory_id"] in would_ids
+                if inj and outcome in ("referenced", "contradicted"):
+                    kept_ref += in_would and outcome == "referenced"
+                    lost_ref += (not in_would) and outcome == "referenced"
+                elif inj and outcome == "ignored":
+                    kept_ign += in_would
+                    cut_ign += not in_would
+                elif not inj and in_would:
+                    unknown_added += 1  # below the live threshold then → outcome unknown (L4)
+        rows.append(
+            {
+                "theta": theta,
+                "kept_ref": kept_ref,
+                "lost_ref": lost_ref,
+                "kept_ign": kept_ign,
+                "cut_ign": cut_ign,
+                "unknown": unknown_added,
+                "tok_per_turn": tokens_total / max(len(turns), 1),
+            }
+        )
+
+    # Recommend the highest threshold that loses zero referenced injections.
+    keepers = [r for r in rows if r["lost_ref"] == 0]
+    recommended = max(keepers, key=lambda r: r["theta"])["theta"] if keepers else current
+
+    table = Table(title=f"sup-mem tune — {len(turns)} logged turns, {attributed} attributed")
+    for col in ("θ", "ref kept", "ref lost", "ign kept", "ign cut", "unknown+", "tok/turn"):
+        table.add_column(col, justify="right")
+    for r in rows:
+        mark = " ←now" if r["theta"] == round(current, 2) else ""
+        mark += " ★rec" if r["theta"] == recommended else ""
+        table.add_row(
+            f"{r['theta']:.2f}{mark}",
+            str(int(r["kept_ref"])),
+            str(int(r["lost_ref"])),
+            str(int(r["kept_ign"])),
+            str(int(r["cut_ign"])),
+            str(int(r["unknown"])),
+            f"{r['tok_per_turn']:.0f}",
+        )
+    console.print(table)
+    console.print(
+        f"Recommended threshold: [bold]{recommended:.2f}[/] "
+        "(highest that keeps every referenced injection). "
+        "'unknown+' candidates were never injected, so their outcomes are unknown — "
+        "lowering the threshold is a guess; raising it is evidence-based."
+    )
+
+    if apply and recommended != current:
+        from sup_mem.config import load_config, render_default_toml
+
+        updated = load_config(
+            overrides={"data_dir": str(config.data_dir), "retrieval": {"threshold": recommended}}
+        )
+        updated.config_path.write_text(render_default_toml(updated), encoding="utf-8")
+        console.print(
+            f"[green]✓[/] wrote retrieval.threshold = {recommended} → {updated.config_path}"
+        )
+    elif apply:
+        console.print("Current threshold already matches the recommendation — nothing written.")
+    return 0
+
+
+def cmd_roi(config: Config) -> int:
+    """Token P&L per memory: what each memory costs in context vs. what it contributes."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from sup_mem.backends import get_backend
+    from sup_mem.ledger import Ledger
+
+    console = Console()
+    with Ledger(config.ledger_db_path) as ledger:
+        stats = ledger.all_stats()
+    if not stats:
+        console.print("[yellow]No outcome data yet[/] — the ledger fills as you use Claude Code.")
+        return 0
+
+    backend = get_backend(config)
+    try:
+        texts = backend.fetch([s["memory_id"] for s in stats])
+    finally:
+        backend.close()
+
+    led = config.ledger
+    table = Table(title="sup-mem roi — token P&L per memory (highest spend first)")
+    for col, justify in (
+        ("memory", "left"),
+        ("inj", "right"),
+        ("tokens", "right"),
+        ("ref", "right"),
+        ("ign", "right"),
+        ("contra", "right"),
+        ("verdict", "left"),
+    ):
+        table.add_column(col, justify=justify)  # type: ignore[arg-type]
+
+    totals = {"injected": 0, "tokens": 0, "referenced": 0, "ignored": 0, "contradicted": 0}
+    for s in stats:
+        for key in totals:
+            totals[key] += int(s[key])
+        if (
+            s["contradicted"] >= led.quarantine_contradictions
+            and s["contradicted"] > s["referenced"]
+        ):
+            verdict = "[red]quarantined[/]"
+        elif s["referenced"] > 0:
+            verdict = "[green]valuable[/]"
+        elif s["injected"] >= 3:
+            verdict = "[yellow]wasteful[/]"
+        else:
+            verdict = "watching"
+        snippet = texts.get(s["memory_id"], s["memory_id"])[:57].replace("\n", " ")
+        table.add_row(
+            snippet,
+            str(s["injected"]),
+            str(s["tokens"]),
+            str(s["referenced"]),
+            str(s["ignored"]),
+            str(s["contradicted"]),
+            verdict,
+        )
+    console.print(table)
+    ref_rate = totals["referenced"] / max(totals["injected"], 1)
+    console.print(
+        f"Totals: {totals['injected']} injections, ~{totals['tokens']} tokens, "
+        f"{totals['referenced']} referenced ({ref_rate:.0%}), "
+        f"{totals['ignored']} ignored, {totals['contradicted']} contradicted."
+    )
+    return 0
+
+
 PINNED_FACTS_TEMPLATE = """# Pinned facts (Tier 0 — injected into EVERY turn, verbatim)
 #
 # Keep this short: a handful of durable, always-relevant facts. '#' lines are notes.

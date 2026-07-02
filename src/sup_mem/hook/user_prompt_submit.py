@@ -59,7 +59,12 @@ def _should_skip(prompt: str, config: Config) -> bool:
     return any(re.search(skip, text, re.IGNORECASE) for skip in config.tier1.skip_patterns)
 
 
-def _retrieve(prompt: str, config: Config) -> list[Hit]:
+def _retrieve(prompt: str, config: Config) -> tuple[list[Hit], list[Hit]]:
+    """Return ``(injected, pool)``: the hits to inject and the wider candidate pool.
+
+    The pool (``ledger.pool_k`` wide, unthresholded) feeds the outcome loop: every candidate
+    is logged so `sup-mem tune` can replay thresholds counterfactually (PHASE6 L4).
+    """
     # LAZY import — this line must never execute on the Tier-1 skip path (I2).
     from sup_mem.backends import get_backend
 
@@ -68,10 +73,20 @@ def _retrieve(prompt: str, config: Config) -> list[Hit]:
         if not backend.hook_safe:
             # e.g. qdrant + fastembed: embedding here would load a model in the short-lived
             # hook (I2). The MCP `recall` tool still works from the warm server.
-            return []
-        return backend.search(prompt, k=config.retrieval.k, threshold=config.retrieval.threshold)
+            return [], []
+        pool_k = max(config.retrieval.k, config.ledger.pool_k)
+        pool = backend.search(prompt, k=pool_k, threshold=0.0)
     finally:
         backend.close()
+
+    try:
+        from sup_mem.ranking import adjust
+
+        pool = adjust(pool, config)  # outcome-reinforced ranking + quarantine (fail-open)
+    except Exception:
+        pass
+    injected = [h for h in pool if h.score >= config.retrieval.threshold][: config.retrieval.k]
+    return injected, pool
 
 
 def _format_hits(hits: list[Hit]) -> str:
@@ -80,16 +95,36 @@ def _format_hits(hits: list[Hit]) -> str:
     return "\n".join(lines)
 
 
-def _log(config: Config, prompt: str, hits: list[Hit], tier: str) -> None:
-    """Best-effort retrieval log for threshold tuning (§8). Never raises."""
+def _log(
+    config: Config,
+    prompt: str,
+    hits: list[Hit],
+    tier: str,
+    session_id: str = "",
+    pool: list[Hit] | None = None,
+) -> None:
+    """Best-effort retrieval log for threshold tuning + the outcome ledger (§8, PHASE6).
+
+    ``candidates`` rows are ``[id, score, injected, est_tokens]`` — the Stop hook ingests
+    them; `sup-mem tune` replays them. Never raises.
+    """
     if not config.logging.retrieval_log:
         return
     with contextlib.suppress(Exception):
+        from datetime import UTC, datetime
+
+        injected_ids = {h.id for h in hits}
         record = {
+            "ts": datetime.now(UTC).isoformat(),
+            "session_id": session_id,
             "query": prompt[:500],
             "tier": tier,
             "injected_ids": [h.id for h in hits],
             "scores": [round(h.score, 4) for h in hits],
+            "candidates": [
+                [h.id, round(h.score, 4), int(h.id in injected_ids), max(1, len(h.text) // 4)]
+                for h in (pool if pool is not None else hits)
+            ],
         }
         config.data_dir.mkdir(parents=True, exist_ok=True)
         with config.retrieval_log_path.open("a", encoding="utf-8") as fh:
@@ -105,6 +140,7 @@ def main() -> int:
     try:
         data = _read_stdin()
         prompt = str(data.get("prompt", ""))
+        session_id = str(data.get("session_id", ""))
         config = load_config()
     except Exception:
         return 0  # fail open before we even know what to do
@@ -123,20 +159,21 @@ def main() -> int:
         skip = False
     if skip:
         _emit(parts)
-        _log(config, prompt, [], "skip")
+        _log(config, prompt, [], "skip", session_id)
         return 0
 
     # Tier 2 — real retrieval; lazily imports the backend and fails open.
     hits: list[Hit] = []
+    pool: list[Hit] = []
     try:
-        hits = _retrieve(prompt, config)
+        hits, pool = _retrieve(prompt, config)
     except Exception:
-        hits = []
+        hits, pool = [], []
     if hits:
         parts.append(_format_hits(hits))
 
     _emit(parts)
-    _log(config, prompt, hits, "retrieve")
+    _log(config, prompt, hits, "retrieve", session_id, pool)
     return 0
 
 

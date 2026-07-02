@@ -119,6 +119,29 @@ class LoggingConfig:
 
 
 @dataclass
+class LedgerConfig:
+    """The outcome loop (docs/PHASE6-LOOP.md): attribution, reinforcement, quarantine."""
+
+    enabled: bool = True
+    pool_k: int = 12  # candidates logged per turn (>= retrieval.k) for counterfactual tuning
+    boost_weight: float = 0.10  # bounded utility boost; base relevance always dominates (L3)
+    quarantine_contradictions: int = 3  # contradictions needed (and > references) to drop
+    min_overlap_tokens: int = 3  # distinctive-token matches for a "referenced" verdict
+    overlap_fraction: float = 0.15  # ... or this fraction of the memory's tokens, if larger
+    # A correction in the user turn right after a referenced memory flips it to contradicted.
+    # NOTE: rendered as single-quoted TOML literals — keep apostrophes out of these patterns.
+    correction_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"^\s*no[,.! ]",
+            r"\bthat.?s (wrong|incorrect|outdated|stale|not right)\b",
+            r"\bnot (true|correct|right)\b",
+            r"\bactually[, ]",
+            r"\b(wrong|incorrect|outdated)\b.{0,20}\bmemory\b",
+        ]
+    )
+
+
+@dataclass
 class Config:
     """Top-level, fully-resolved configuration."""
 
@@ -132,6 +155,7 @@ class Config:
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    ledger: LedgerConfig = field(default_factory=LedgerConfig)
 
     # --- Derived paths (never serialized) -------------------------------------------------
     @property
@@ -150,6 +174,11 @@ class Config:
     @property
     def retrieval_log_path(self) -> Path:
         return self.data_dir / "retrieval.jsonl"
+
+    @property
+    def ledger_db_path(self) -> Path:
+        """Outcome ledger (docs/PHASE6-LOOP.md) — its own file, backend-agnostic (L5)."""
+        return self.data_dir / "ledger.db"
 
     @property
     def manifest_cache_path(self) -> Path:
@@ -334,4 +363,16 @@ ef = {c.qdrant.hnsw.ef}
 
 [logging]
 retrieval_log = {_b(c.logging.retrieval_log)}   # log (query, ids, scores, tier) for tuning (§8)
+
+[ledger]
+# The outcome loop (docs/PHASE6-LOOP.md): the Stop hook attributes each injected memory as
+# referenced / ignored / contradicted; retrieval gets a bounded utility boost; `sup-mem tune`
+# and `sup-mem roi` report on the evidence. Advisory + fail-open (L2/L3).
+enabled = {_b(c.ledger.enabled)}
+pool_k = {c.ledger.pool_k}              # candidates logged per turn for counterfactual tuning
+boost_weight = {c.ledger.boost_weight}       # bounded score adjustment from outcomes
+quarantine_contradictions = {c.ledger.quarantine_contradictions}
+min_overlap_tokens = {c.ledger.min_overlap_tokens}
+overlap_fraction = {c.ledger.overlap_fraction}
+correction_patterns = {_arr(c.ledger.correction_patterns)}
 """

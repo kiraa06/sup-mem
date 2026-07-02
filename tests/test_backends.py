@@ -149,6 +149,16 @@ def test_store_is_idempotent_on_text_and_source(backend: MemoryBackend) -> None:
     assert backend.health()["count"] == 1  # no duplicate row
 
 
+def test_fetch_roundtrips_and_omits_unknown_ids(backend: MemoryBackend) -> None:
+    id1 = backend.store("alpha fact about deployment pipelines", {"source": "f1"})
+    id2 = backend.store("beta fact about database tuning", {"source": "f2"})
+    fetched = backend.fetch([id1, id2, "no-such-id"])
+    assert fetched[id1].startswith("alpha fact")
+    assert fetched[id2].startswith("beta fact")
+    assert "no-such-id" not in fetched
+    assert backend.fetch([]) == {}
+
+
 def test_reindex_is_safe(backend: MemoryBackend) -> None:
     _seed(backend)
     backend.reindex()  # must not raise

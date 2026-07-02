@@ -53,6 +53,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="List what would be migrated without storing."
     )
 
+    p_tune = sub.add_parser(
+        "tune",
+        help="Counterfactually replay logged retrievals against recorded outcomes and "
+        "recommend a threshold (the outcome loop).",
+    )
+    p_tune.add_argument(
+        "--apply", action="store_true", help="Write the recommended threshold into config.toml."
+    )
+
+    sub.add_parser(
+        "roi",
+        help="Token P&L per memory: injections, tokens consumed, referenced/ignored/"
+        "contradicted, verdicts.",
+    )
+
     sub.add_parser(
         "doctor", help="Report backend/service health and enforce embedding-model consistency."
     )
@@ -82,6 +97,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return commands.cmd_setup(config, args.backend, assume_yes=args.yes)
     if args.command == "migrate-native":
         return commands.cmd_migrate_native(config, dry_run=args.dry_run)
+    if args.command == "tune":
+        return commands.cmd_tune(config, apply=args.apply)
+    if args.command == "roi":
+        return commands.cmd_roi(config)
     if args.command == "doctor":
         return commands.cmd_doctor(config)
     if args.command == "reindex":

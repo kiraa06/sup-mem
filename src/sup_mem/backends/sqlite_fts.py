@@ -198,6 +198,15 @@ class SqliteFtsBackend(MemoryBackend):
                 break
         return hits
 
+    def fetch(self, memory_ids: list[str]) -> dict[str, str]:
+        if not memory_ids:
+            return {}
+        marks = ",".join("?" for _ in memory_ids)
+        rows = self._conn.execute(
+            f"SELECT id, text FROM memories WHERE id IN ({marks})", memory_ids
+        ).fetchall()
+        return {str(row["id"]): str(row["text"]) for row in rows}
+
     # -- introspection --------------------------------------------------------------------
     def manifest(self, max_topics: int) -> list[str]:
         """Distinct topics/tags by frequency, capped at ``max_topics``.

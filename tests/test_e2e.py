@@ -61,6 +61,10 @@ def test_init_remember_then_hook_retrieves(
     assert log_path.exists()
     entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
     assert any(e["tier"] == "retrieve" for e in entries)
+    # PHASE6: every logged turn carries the candidate pool for the outcome loop.
+    retrieve = next(e for e in entries if e["tier"] == "retrieve")
+    assert retrieve["candidates"] and all(len(c) == 4 for c in retrieve["candidates"])
+    assert "session_id" in retrieve and "ts" in retrieve
 
     # 4) trivial turn is skipped — nothing beyond Tier 0 injected.
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": "thanks, perfect!"})))

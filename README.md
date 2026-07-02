@@ -44,6 +44,27 @@ Then **restart Claude Code** so it loads the new hook + MCP server.
 
 ---
 
+## The loop — memories with a P&L (what makes sup-mem different)
+
+Every other memory layer is open-loop: store → retrieve → inject → *hope*. sup-mem **closes
+the loop**. A `Stop` hook reads the session transcript after each response and attributes
+every injected memory as **referenced** (the answer actually used it), **ignored**, or
+**contradicted** (you pushed back right after). From that evidence:
+
+- **Reinforced retrieval** — referenced memories get a bounded score boost; repeatedly
+  contradicted ones are quarantined (never deleted, always reversible).
+- **`sup-mem tune`** — counterfactually replays your logged turns at other thresholds and
+  recommends one with evidence ("at 0.55 you'd cut 78% of ignored injections and lose zero
+  referenced ones"). `--apply` writes it to config. Honest by design: candidates that were
+  never injected are reported as *unknown*, not guessed.
+- **`sup-mem roi`** — token P&L per memory: what each one costs in context vs. what it
+  contributes. Find the memory that burned 40k tokens this month and was never used.
+
+All of it is advisory, fail-open, and off the hot path — the per-prompt cost is one indexed
+SQLite lookup. Spec: [docs/PHASE6-LOOP.md](docs/PHASE6-LOOP.md).
+
+---
+
 ## How it works — two front-doors, one backend
 
 Retrieval happens two ways over the **same** store: an automatic hook injects context every turn, and MCP tools let Claude read/write explicitly.
@@ -141,6 +162,8 @@ Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · 
 | `sup-mem init` | Create the SQLite FTS store, write config + pinned-facts, register with Claude Code. |
 | `sup-mem setup --backend qdrant [--yes]` | Bring up Qdrant, detect the embedder, create the collection, register. |
 | `sup-mem migrate-native [--dry-run]` | Copy Claude Code's built-in file memories (`~/.claude/projects/*/memory`) into the store. Copy-only, idempotent — re-run anytime to pick up stragglers. |
+| `sup-mem tune [--apply]` | Counterfactual threshold replay against recorded outcomes; recommends (and optionally applies) a better threshold. |
+| `sup-mem roi` | Token P&L per memory: injections, tokens, referenced/ignored/contradicted, verdicts. |
 | `sup-mem doctor` | Backend/service health; enforce the model-consistency contract. |
 | `sup-mem reindex` | Re-embed the store with the current model (vector backends). |
 | `sup-mem serve` | Run the long-lived MCP server. |

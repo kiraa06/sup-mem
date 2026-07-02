@@ -117,6 +117,9 @@ def test_fail_open_when_backend_search_raises(
         def reindex(self, progress: object = None) -> None:  # pragma: no cover
             return None
 
+        def fetch(self, memory_ids: list[str]) -> dict[str, str]:  # pragma: no cover
+            return {}
+
     monkeypatch.setattr("sup_mem.backends.get_backend", lambda _c: Boom())
     rc, out = _run_main("what did we decide about the schema?", monkeypatch, capsys, data_dir)
     assert rc == 0

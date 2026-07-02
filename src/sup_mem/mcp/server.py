@@ -58,6 +58,12 @@ class MemoryTools:
     def recall(self, query: str, k: int | None = None) -> str:
         limit = k if (k and k > 0) else self._config.retrieval.k
         hits = self._backend.search(query, k=limit, threshold=self._config.retrieval.threshold)
+        try:
+            from sup_mem.ranking import adjust
+
+            hits = adjust(hits, self._config)  # outcome boost + quarantine (fail-open, L2)
+        except Exception:
+            pass
         if not hits:
             return "No stored memories matched that query."
         lines = ["Relevant long-term memories:"]

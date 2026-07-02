@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 HOOK_EVENTS: dict[str, str] = {
     "UserPromptSubmit": "sup-mem-hook-userprompt",
     "SessionStart": "sup-mem-hook-session",
+    "Stop": "sup-mem-hook-stop",  # the outcome loop's attribution pass (PHASE6)
 }
 MCP_SERVER_NAME = "sup-mem"
 

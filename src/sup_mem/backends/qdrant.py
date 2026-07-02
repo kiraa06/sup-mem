@@ -209,6 +209,16 @@ class QdrantBackend(MemoryBackend):
             )
         return hits
 
+    def fetch(self, memory_ids: list[str]) -> dict[str, str]:
+        if not memory_ids or not self._client.collection_exists(self._collection):
+            return {}
+        points = self._client.retrieve(self._collection, ids=memory_ids, with_payload=True)
+        return {
+            str(point.id): str((point.payload or {}).get("text", ""))
+            for point in points
+            if not (point.payload or {}).get(_META_FLAG)
+        }
+
     # -- introspection --------------------------------------------------------------------
     def _iter_payloads(self) -> Any:
         offset = None

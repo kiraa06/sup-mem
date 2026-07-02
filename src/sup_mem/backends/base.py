@@ -48,6 +48,11 @@ class MemoryBackend(ABC):
     def reindex(self, progress: ProgressCallback | None = None) -> None:
         """Re-embed / rebuild the store. No-op for lexical backends; required for vector (I7)."""
 
+    @abstractmethod
+    def fetch(self, memory_ids: list[str]) -> dict[str, str]:
+        """Return ``{id: text}`` for the ids that exist. Used by the outcome ledger's
+        attribution (docs/PHASE6-LOOP.md, L5); missing ids are simply omitted."""
+
     @property
     def hook_safe(self) -> bool:
         """Whether the per-prompt hook may call ``search()`` without loading a model (I2).
