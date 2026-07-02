@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from claude_memory import commands
-from claude_memory.backends import get_backend
-from claude_memory.config import Config
-from claude_memory.migrate import iter_native_memories, migrate_native
+from sup_mem import commands
+from sup_mem.backends import get_backend
+from sup_mem.config import Config
+from sup_mem.migrate import iter_native_memories, migrate_native
 
 FACT_MD = """---
 name: canonical-jenkins-job

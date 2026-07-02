@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
-from claude_memory.models import Hit, Metadata
+from sup_mem.models import Hit, Metadata
 
 # Called as progress(done, total) during a reindex so the CLI can render a bar.
 ProgressCallback = Callable[[int, int], None]

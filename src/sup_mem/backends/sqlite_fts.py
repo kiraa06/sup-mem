@@ -1,6 +1,6 @@
 """Default backend: SQLite FTS5 + BM25 (HANDOVER §6.2, I8).
 
-Zero optional dependencies — a single embedded file at ``~/.claude-memory/memory.db``, no
+Zero optional dependencies — a single embedded file at ``~/.sup-mem/memory.db``, no
 server, no model, no Docker. Uses the stdlib ``sqlite3`` module only.
 
 Scoring (see §14 for the documented open decision):
@@ -28,11 +28,11 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from claude_memory.backends.base import MemoryBackend, ProgressCallback
-from claude_memory.models import Hit, Metadata
+from sup_mem.backends.base import MemoryBackend, ProgressCallback
+from sup_mem.models import Hit, Metadata
 
 if TYPE_CHECKING:
-    from claude_memory.config import Config
+    from sup_mem.config import Config
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 _MAX_QUERY_TERMS = 32  # cap MATCH size; long prompts don't need every token

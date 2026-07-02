@@ -1,8 +1,8 @@
-"""Command-line interface for claude-memory (HANDOVER §7).
+"""Command-line interface for sup-mem (HANDOVER §7).
 
 Phase 0 ships the full argument surface plus stubs; the command bodies are implemented in
 Phase 4 (init / setup / doctor / reindex / serve / manifest). Keeping the parser complete now
-lets ``claude-memory --help`` work (the Phase 0 acceptance gate) and lets tests introspect it.
+lets ``sup-mem --help`` work (the Phase 0 acceptance gate) and lets tests introspect it.
 """
 
 from __future__ import annotations
@@ -10,21 +10,21 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from claude_memory import __version__
-from claude_memory.config import load_config
+from sup_mem import __version__
+from sup_mem.config import load_config
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="claude-memory",
+        prog="sup-mem",
         description="Self-hosted, pluggable global memory layer for Claude.",
     )
-    parser.add_argument("--version", action="version", version=f"claude-memory {__version__}")
+    parser.add_argument("--version", action="version", version=f"sup-mem {__version__}")
     parser.add_argument(
         "--data-dir",
         default=None,
         metavar="PATH",
-        help="Override the data directory (default: ~/.claude-memory).",
+        help="Override the data directory (default: ~/.sup-mem).",
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
@@ -74,7 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         overrides["data_dir"] = args.data_dir
     config = load_config(overrides=overrides)
 
-    from claude_memory import commands
+    from sup_mem import commands
 
     if args.command == "init":
         return commands.cmd_init(config)

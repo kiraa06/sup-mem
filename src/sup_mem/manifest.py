@@ -17,8 +17,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from claude_memory.backends.base import MemoryBackend
-    from claude_memory.config import Config
+    from sup_mem.backends.base import MemoryBackend
+    from sup_mem.config import Config
 
 
 def _approx_tokens(text: str) -> int:

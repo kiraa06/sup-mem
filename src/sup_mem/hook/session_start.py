@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import sys
 
-from claude_memory.config import load_config
+from sup_mem.config import load_config
 
 
 def main() -> int:
@@ -17,8 +17,8 @@ def main() -> int:
         sys.stdin.read()  # drain the hook payload (unused today)
         config = load_config()
 
-        from claude_memory.backends import get_backend
-        from claude_memory.manifest import build_manifest
+        from sup_mem.backends import get_backend
+        from sup_mem.manifest import build_manifest
 
         backend = get_backend(config)
         try:

@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from claude_memory.backends import get_backend
-from claude_memory.backends.base import MemoryBackend
-from claude_memory.config import Config
-from claude_memory.hook import user_prompt_submit as hook
-from claude_memory.models import Hit
+from sup_mem.backends import get_backend
+from sup_mem.backends.base import MemoryBackend
+from sup_mem.config import Config
+from sup_mem.hook import user_prompt_submit as hook
+from sup_mem.models import Hit
 
 
 def _run_main(
@@ -24,8 +24,8 @@ def _run_main(
     capsys: pytest.CaptureFixture[str],
     data_dir: Path,
 ) -> tuple[int, str]:
-    monkeypatch.setenv("CLAUDE_MEMORY_DATA_DIR", str(data_dir))
-    monkeypatch.setenv("CLAUDE_MEMORY_LOGGING_RETRIEVAL_LOG", "false")
+    monkeypatch.setenv("SUP_MEM_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SUP_MEM_LOGGING_RETRIEVAL_LOG", "false")
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": prompt})))
     rc = hook.main()
     return rc, capsys.readouterr().out
@@ -80,7 +80,7 @@ def test_retrieval_injects_relevant_memory(
 
 
 def _cfg(data_dir: Path) -> Config:
-    from claude_memory.config import load_config
+    from sup_mem.config import load_config
 
     return load_config(overrides={"data_dir": str(data_dir)})
 
@@ -92,7 +92,7 @@ def test_below_threshold_hits_are_dropped(
     b = get_backend(_cfg(data_dir))
     b.store("The database backups run nightly to the S3 archive bucket.", {"source": "s1"})
     b.close()
-    monkeypatch.setenv("CLAUDE_MEMORY_RETRIEVAL_THRESHOLD", "0.999")
+    monkeypatch.setenv("SUP_MEM_RETRIEVAL_THRESHOLD", "0.999")
     rc, out = _run_main("database performance tuning strategies", monkeypatch, capsys, data_dir)
     assert rc == 0
     assert "auto-retrieved" not in out
@@ -117,7 +117,7 @@ def test_fail_open_when_backend_search_raises(
         def reindex(self, progress: object = None) -> None:  # pragma: no cover
             return None
 
-    monkeypatch.setattr("claude_memory.backends.get_backend", lambda _c: Boom())
+    monkeypatch.setattr("sup_mem.backends.get_backend", lambda _c: Boom())
     rc, out = _run_main("what did we decide about the schema?", monkeypatch, capsys, data_dir)
     assert rc == 0
     assert out.strip() == ""  # no pinned + retrieval failed silently → nothing injected
@@ -128,18 +128,18 @@ def test_skip_path_imports_nothing_heavy(tmp_path: Path) -> None:
     script = (
         "import io, json, sys\n"
         'sys.stdin = io.StringIO(json.dumps({"prompt": "thanks!"}))\n'
-        "import claude_memory.hook.user_prompt_submit as h\n"
+        "import sup_mem.hook.user_prompt_submit as h\n"
         "h.main()\n"
         "heavy = [m for m in ("
-        "'claude_memory.backends', 'claude_memory.backends.sqlite_fts',"
+        "'sup_mem.backends', 'sup_mem.backends.sqlite_fts',"
         " 'sqlite3', 'fastembed', 'qdrant_client') if m in sys.modules]\n"
         "sys.stderr.write('HEAVY=' + ','.join(heavy))\n"
         "sys.exit(2 if heavy else 0)\n"
     )
     env = {
         **os.environ,
-        "CLAUDE_MEMORY_DATA_DIR": str(tmp_path),
-        "CLAUDE_MEMORY_LOGGING_RETRIEVAL_LOG": "false",
+        "SUP_MEM_DATA_DIR": str(tmp_path),
+        "SUP_MEM_LOGGING_RETRIEVAL_LOG": "false",
     }
     proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env)
     assert proc.returncode == 0, f"heavy modules imported on skip path -> {proc.stderr}"

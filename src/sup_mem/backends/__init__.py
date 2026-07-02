@@ -11,19 +11,19 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from claude_memory.backends.base import MemoryBackend
-    from claude_memory.config import Config
+    from sup_mem.backends.base import MemoryBackend
+    from sup_mem.config import Config
 
 
 def get_backend(config: Config) -> MemoryBackend:
     """Construct the configured backend. Raises ``ValueError`` for an unknown name."""
     name = config.backend
     if name == "sqlite_fts":
-        from claude_memory.backends.sqlite_fts import SqliteFtsBackend
+        from sup_mem.backends.sqlite_fts import SqliteFtsBackend
 
         return SqliteFtsBackend(config)
     if name == "qdrant":
-        from claude_memory.backends.qdrant import QdrantBackend
+        from sup_mem.backends.qdrant import QdrantBackend
 
         return QdrantBackend(config)
     if name == "pgvector":

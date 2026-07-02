@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from claude_memory import commands
-from claude_memory.config import load_config
-from claude_memory.registration import register_into_claude_code
+from sup_mem import commands
+from sup_mem.config import load_config
+from sup_mem.registration import register_into_claude_code
 
 
 def test_init_creates_store_config_pinned_and_registers(tmp_path: Path) -> None:
@@ -32,7 +32,7 @@ def test_init_creates_store_config_pinned_and_registers(tmp_path: Path) -> None:
     assert "SessionStart" in settings["hooks"]
 
     mcp = json.loads(claude_json.read_text())
-    assert mcp["mcpServers"]["claude-memory"]["args"] == ["serve"]
+    assert mcp["mcpServers"]["sup-mem"]["args"] == ["serve"]
 
 
 def test_registration_merges_without_clobbering_and_is_idempotent(tmp_path: Path) -> None:
@@ -67,15 +67,15 @@ def test_registration_merges_without_clobbering_and_is_idempotent(tmp_path: Path
     assert merged["hooks"]["PreToolUse"][0]["matcher"] == "Bash"  # other hook event preserved
     ups = [h["command"] for e in merged["hooks"]["UserPromptSubmit"] for h in e["hooks"]]
     assert "user-own-hook" in ups  # the user's own hook survives
-    assert any("claude-memory-hook-userprompt" in c for c in ups)  # ours added alongside
+    assert any("sup-mem-hook-userprompt" in c for c in ups)  # ours added alongside
 
     mcp = json.loads(claude_json.read_text())
     assert mcp["numStartups"] == 42  # unrelated top-level key preserved
-    assert "codegraph" in mcp["mcpServers"] and "claude-memory" in mcp["mcpServers"]
+    assert "codegraph" in mcp["mcpServers"] and "sup-mem" in mcp["mcpServers"]
 
     # Backups of the pre-existing files were kept.
-    assert (claude_dir / "settings.json.claude-memory.bak").exists()
-    assert claude_json.with_name(".claude.json.claude-memory.bak").exists()
+    assert (claude_dir / "settings.json.sup-mem.bak").exists()
+    assert claude_json.with_name(".claude.json.sup-mem.bak").exists()
 
     # Re-running changes nothing (idempotent).
     second = register_into_claude_code(

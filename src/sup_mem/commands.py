@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from claude_memory.config import Config
+    from sup_mem.config import Config
 
 
 def cmd_doctor(config: Config) -> int:
@@ -21,8 +21,8 @@ def cmd_doctor(config: Config) -> int:
     from rich.console import Console
     from rich.table import Table
 
-    from claude_memory.backends import get_backend
-    from claude_memory.embedding.base import EmbeddingError
+    from sup_mem.backends import get_backend
+    from sup_mem.embedding.base import EmbeddingError
 
     console = Console()
     try:
@@ -39,7 +39,7 @@ def cmd_doctor(config: Config) -> int:
             console.print(f"[red]✗[/] backend unreachable: {exc}")
             return 1
 
-        table = Table(title="claude-memory doctor", show_header=False, title_justify="left")
+        table = Table(title="sup-mem doctor", show_header=False, title_justify="left")
         table.add_row("backend", str(health.get("backend")))
         table.add_row("data dir", str(config.data_dir))
         table.add_row("memories", str(health.get("count")))
@@ -78,7 +78,7 @@ def cmd_reindex(config: Config) -> int:
     from rich.console import Console
     from rich.progress import BarColumn, Progress, TextColumn
 
-    from claude_memory.backends import get_backend
+    from sup_mem.backends import get_backend
 
     console = Console()
     backend = get_backend(config)
@@ -104,7 +104,7 @@ def cmd_reindex(config: Config) -> int:
 
 def cmd_serve(config: Config) -> int:
     """Run the long-lived MCP server (blocks)."""
-    from claude_memory.mcp.server import serve
+    from sup_mem.mcp.server import serve
 
     serve(config)
     return 0
@@ -112,8 +112,8 @@ def cmd_serve(config: Config) -> int:
 
 def cmd_manifest(config: Config) -> int:
     """Print (and warm the cache for) the scale-aware topic manifest."""
-    from claude_memory.backends import get_backend
-    from claude_memory.manifest import build_manifest
+    from sup_mem.backends import get_backend
+    from sup_mem.manifest import build_manifest
 
     backend = get_backend(config)
     try:
@@ -127,12 +127,12 @@ def cmd_manifest(config: Config) -> int:
 def cmd_migrate_native(
     config: Config, *, projects_dir: Path | None = None, dry_run: bool = False
 ) -> int:
-    """Copy Claude Code's built-in file memories into the claude-memory store (copy-only)."""
+    """Copy Claude Code's built-in file memories into the sup-mem store (copy-only)."""
     from rich.console import Console
 
-    from claude_memory.backends import get_backend
-    from claude_memory.migrate import migrate_native
-    from claude_memory.registration import claude_config_dir
+    from sup_mem.backends import get_backend
+    from sup_mem.migrate import migrate_native
+    from sup_mem.registration import claude_config_dir
 
     console = Console()
     source_dir = projects_dir if projects_dir is not None else claude_config_dir() / "projects"
@@ -178,7 +178,7 @@ PINNED_FACTS_TEMPLATE = """# Pinned facts (Tier 0 — injected into EVERY turn, 
 _COMPOSE_YAML = """services:
   qdrant:
     image: qdrant/qdrant:v1.12.4
-    container_name: claude-memory-qdrant
+    container_name: sup-mem-qdrant
     restart: unless-stopped
     ports:
       - "6333:6333"
@@ -201,9 +201,9 @@ def cmd_init(
     """Default one-liner: create the SQLite FTS store + register with Claude Code (§7)."""
     from rich.console import Console
 
-    from claude_memory.backends import get_backend
-    from claude_memory.config import render_default_toml
-    from claude_memory.registration import register_into_claude_code
+    from sup_mem.backends import get_backend
+    from sup_mem.config import render_default_toml
+    from sup_mem.registration import register_into_claude_code
 
     console = Console()
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -216,7 +216,7 @@ def cmd_init(
     report = register_into_claude_code(
         config, claude_dir=claude_dir, claude_json=claude_json, use_cli=use_cli
     )
-    console.print(f"[green]✓[/] claude-memory ready (SQLite FTS) — {config.data_dir}")
+    console.print(f"[green]✓[/] sup-mem ready (SQLite FTS) — {config.data_dir}")
     console.print(
         f"  hooks      → {report['settings_path']} "
         f"({'updated' if report['hooks_changed'] else 'already registered'})"
@@ -241,7 +241,7 @@ def _compose_up(console: Console) -> None:
         return
     compose_file = Path.cwd() / "docker-compose.qdrant.yml"
     if not compose_file.exists():
-        compose_file = Path(tempfile.gettempdir()) / "claude-memory-docker-compose.qdrant.yml"
+        compose_file = Path(tempfile.gettempdir()) / "sup-mem-docker-compose.qdrant.yml"
         compose_file.write_text(_COMPOSE_YAML, encoding="utf-8")
     try:
         subprocess.run(
@@ -278,11 +278,11 @@ def cmd_setup(
         console.print(f"[red]setup for backend {backend_name!r} is not supported[/]")
         return 1
 
-    from claude_memory.backends import get_backend
-    from claude_memory.config import load_config, render_default_toml
-    from claude_memory.embedding.base import EmbeddingError
-    from claude_memory.embedding.detect import detect_embedding_provider
-    from claude_memory.registration import register_into_claude_code
+    from sup_mem.backends import get_backend
+    from sup_mem.config import load_config, render_default_toml
+    from sup_mem.embedding.base import EmbeddingError
+    from sup_mem.embedding.detect import detect_embedding_provider
+    from sup_mem.registration import register_into_claude_code
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
     _compose_up(console)
@@ -317,7 +317,7 @@ def cmd_setup(
     report = register_into_claude_code(
         merged, claude_dir=claude_dir, claude_json=claude_json, use_cli=use_cli
     )
-    console.print(f"[green]✓[/] claude-memory set up (Qdrant @ {merged.qdrant.url})")
+    console.print(f"[green]✓[/] sup-mem set up (Qdrant @ {merged.qdrant.url})")
     console.print(
         f"  hooks      → {report['settings_path']} "
         f"({'updated' if report['hooks_changed'] else 'already registered'})"

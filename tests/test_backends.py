@@ -13,9 +13,9 @@ from collections.abc import Callable, Iterator
 
 import pytest
 
-from claude_memory.backends import get_backend
-from claude_memory.backends.base import MemoryBackend
-from claude_memory.config import Config
+from sup_mem.backends import get_backend
+from sup_mem.backends.base import MemoryBackend
+from sup_mem.config import Config
 
 # sqlite_fts always; qdrant is marked so `-m "not qdrant"` skips it and `-m qdrant` selects it.
 BACKEND_PARAMS = [
@@ -167,7 +167,7 @@ def test_sqlite_nonmatching_terms_return_empty() -> None:
     # words absent from the store produce no FTS match.
     import tempfile
 
-    from claude_memory.config import load_config
+    from sup_mem.config import load_config
 
     with tempfile.TemporaryDirectory() as tmp:
         b = get_backend(load_config(overrides={"data_dir": tmp, "backend": "sqlite_fts"}))

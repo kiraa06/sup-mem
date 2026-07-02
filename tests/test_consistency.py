@@ -9,10 +9,10 @@ from collections.abc import Callable
 
 import pytest
 
-from claude_memory import commands
-from claude_memory.backends import get_backend
-from claude_memory.config import Config
-from claude_memory.embedding.base import EmbeddingMeta
+from sup_mem import commands
+from sup_mem.backends import get_backend
+from sup_mem.config import Config
+from sup_mem.embedding.base import EmbeddingMeta
 
 pytestmark = pytest.mark.qdrant
 

@@ -6,9 +6,9 @@ from collections.abc import Callable
 
 import pytest
 
-from claude_memory.config import Config
-from claude_memory.embedding import detect
-from claude_memory.embedding.base import EmbeddingError, EmbeddingMeta, provider_is_hook_safe
+from sup_mem.config import Config
+from sup_mem.embedding import detect
+from sup_mem.embedding.base import EmbeddingError, EmbeddingMeta, provider_is_hook_safe
 
 # Every probe reports (available, model). Patch them to simulate an environment.
 _PROBES = {
@@ -21,7 +21,7 @@ _PROBES = {
 
 
 def _set_availability(monkeypatch: pytest.MonkeyPatch, available: set[str]) -> None:
-    from claude_memory.embedding import providers
+    from sup_mem.embedding import providers
 
     for attr, name in _PROBES.items():
         model = providers.SPEC_BY_NAME[name].default_model if name in available else ""

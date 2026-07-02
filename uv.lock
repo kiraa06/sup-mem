@@ -413,60 +413,6 @@ wheels = [
 ]
 
 [[package]]
-name = "claude-memory"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "mcp" },
-    { name = "rich" },
-]
-
-[package.optional-dependencies]
-openai = [
-    { name = "openai" },
-]
-pgvector = [
-    { name = "pgvector" },
-    { name = "psycopg", extra = ["binary"] },
-]
-qdrant = [
-    { name = "fastembed" },
-    { name = "qdrant-client" },
-]
-voyage = [
-    { name = "voyageai" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastembed", marker = "extra == 'qdrant'", specifier = ">=0.3" },
-    { name = "mcp", specifier = ">=1.2" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
-    { name = "pgvector", marker = "extra == 'pgvector'", specifier = ">=0.3" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'pgvector'", specifier = ">=3.1" },
-    { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.9" },
-    { name = "rich", specifier = ">=13.7" },
-    { name = "voyageai", marker = "extra == 'voyage'", specifier = ">=0.2" },
-]
-provides-extras = ["qdrant", "pgvector", "voyage", "openai"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.11" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "ruff", specifier = ">=0.6" },
-]
-
-[[package]]
 name = "click"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2747,6 +2693,60 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/eb/e3/7c1dc7381d9f8ab7d854328ebfa884e62cb3f3d8549ddfd37c7814f42afa/starlette-1.3.1.tar.gz", hash = "sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0", size = 2703240, upload-time = "2026-06-12T09:23:11.602Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6", size = 73632, upload-time = "2026-06-12T09:23:10.017Z" },
+]
+
+[[package]]
+name = "sup-mem"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "mcp" },
+    { name = "rich" },
+]
+
+[package.optional-dependencies]
+openai = [
+    { name = "openai" },
+]
+pgvector = [
+    { name = "pgvector" },
+    { name = "psycopg", extra = ["binary"] },
+]
+qdrant = [
+    { name = "fastembed" },
+    { name = "qdrant-client" },
+]
+voyage = [
+    { name = "voyageai" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastembed", marker = "extra == 'qdrant'", specifier = ">=0.3" },
+    { name = "mcp", specifier = ">=1.2" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
+    { name = "pgvector", marker = "extra == 'pgvector'", specifier = ">=0.3" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'pgvector'", specifier = ">=3.1" },
+    { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.9" },
+    { name = "rich", specifier = ">=13.7" },
+    { name = "voyageai", marker = "extra == 'voyage'", specifier = ">=0.2" },
+]
+provides-extras = ["qdrant", "pgvector", "voyage", "openai"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "ruff", specifier = ">=0.6" },
 ]
 
 [[package]]

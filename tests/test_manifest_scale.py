@@ -6,9 +6,9 @@ from collections.abc import Callable
 
 import pytest
 
-from claude_memory.backends import get_backend
-from claude_memory.config import Config
-from claude_memory.manifest import build_manifest
+from sup_mem.backends import get_backend
+from sup_mem.config import Config
+from sup_mem.manifest import build_manifest
 
 
 def test_empty_store_manifest_is_blank(make_config: Callable[..., Config]) -> None:

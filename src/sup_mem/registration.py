@@ -10,7 +10,7 @@ Layout (Claude Code, 2026 — verified on-machine):
   * Claude Code does NOT hot-reload — a restart is required to pick up the changes.
 
 Hook writes deep-merge into existing config (preserving the user's other keys/hooks), dedupe
-our own entries (idempotent), and keep a ``.claude-memory.bak`` of the prior file.
+our own entries (idempotent), and keep a ``.sup-mem.bak`` of the prior file.
 ``claude_dir`` / ``claude_json`` are overridable (and honor ``CLAUDE_CONFIG_DIR``) for testing.
 """
 
@@ -25,13 +25,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from claude_memory.config import Config
+    from sup_mem.config import Config
 
 HOOK_EVENTS: dict[str, str] = {
-    "UserPromptSubmit": "claude-memory-hook-userprompt",
-    "SessionStart": "claude-memory-hook-session",
+    "UserPromptSubmit": "sup-mem-hook-userprompt",
+    "SessionStart": "sup-mem-hook-session",
 }
-MCP_SERVER_NAME = "claude-memory"
+MCP_SERVER_NAME = "sup-mem"
 
 
 def claude_config_dir(override: Path | None = None) -> Path:
@@ -59,7 +59,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        shutil.copy2(path, path.with_name(path.name + ".claude-memory.bak"))
+        shutil.copy2(path, path.with_name(path.name + ".sup-mem.bak"))
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

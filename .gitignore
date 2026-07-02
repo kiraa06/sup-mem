@@ -27,9 +27,9 @@ env/
 htmlcov/
 coverage.xml
 
-# Local runtime data (claude-memory writes to ~/.claude-memory by default;
+# Local runtime data (sup-mem writes to ~/.sup-mem by default;
 # ignore any accidental in-repo store or logs)
-.claude-memory/
+.sup-mem/
 *.db
 *.db-shm
 *.db-wal

@@ -1,4 +1,4 @@
-"""claude-memory: a self-hosted, pluggable global memory layer for Claude.
+"""sup-mem: a self-hosted, pluggable global memory layer for Claude.
 
 Two front-doors (an automatic hook + explicit MCP tools) over one pluggable backend (I1).
 
@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from claude_memory.config import Config, load_config
-from claude_memory.models import Hit, MemoryRecord
+from sup_mem.config import Config, load_config
+from sup_mem.models import Hit, MemoryRecord
 
 try:
-    __version__ = version("claude-memory")
+    __version__ = version("sup-mem")
 except PackageNotFoundError:  # running from a source tree without an install
     __version__ = "0.0.0"
 

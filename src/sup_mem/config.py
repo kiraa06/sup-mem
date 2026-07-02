@@ -1,11 +1,11 @@
-"""Configuration for claude-memory.
+"""Configuration for sup-mem.
 
 Precedence (low → high): dataclass defaults ← ``config.toml`` ← environment ← explicit flags.
 
 Every tunable from HANDOVER §8 lives here with a sane default; nothing operational is
 hard-coded in logic (I9). Env vars mirror the nested keys, upper-cased and joined with ``_``
-under the ``CLAUDE_MEMORY_`` prefix, e.g. ``CLAUDE_MEMORY_RETRIEVAL_THRESHOLD`` and
-``CLAUDE_MEMORY_QDRANT_HNSW_M`` (§13).
+under the ``SUP_MEM_`` prefix, e.g. ``SUP_MEM_RETRIEVAL_THRESHOLD`` and
+``SUP_MEM_QDRANT_HNSW_M`` (§13).
 
 This module is stdlib-only so it is safe to import on the hook's hot path (I2).
 """
@@ -19,8 +19,8 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, cast, get_origin, get_type_hints
 
-ENV_PREFIX = "CLAUDE_MEMORY_"
-DEFAULT_DATA_DIR = Path.home() / ".claude-memory"
+ENV_PREFIX = "SUP_MEM_"
+DEFAULT_DATA_DIR = Path.home() / ".sup-mem"
 
 
 @dataclass
@@ -102,7 +102,7 @@ class QdrantHnswConfig:
 @dataclass
 class QdrantConfig:
     url: str = "http://localhost:6333"
-    collection: str = "claude_memory"
+    collection: str = "sup_mem"
     quantization: bool = False  # optional scalar quantization
     hnsw: QdrantHnswConfig = field(default_factory=QdrantHnswConfig)
 
@@ -217,7 +217,7 @@ def _build(cls: Any, data: dict[str, Any]) -> Any:
 
 
 def _collect_env(instance: Any, prefix: list[str]) -> dict[str, Any]:
-    """Walk the config schema and pull any matching ``CLAUDE_MEMORY_*`` env vars into a dict."""
+    """Walk the config schema and pull any matching ``SUP_MEM_*`` env vars into a dict."""
     out: dict[str, Any] = {}
     for f in fields(instance):
         value = getattr(instance, f.name)
@@ -285,9 +285,9 @@ def render_default_toml(config: Config | None = None) -> str:
     def _b(value: bool) -> str:
         return "true" if value else "false"
 
-    return f"""# claude-memory configuration — https://github.com/kiranjose/claude-memory
-# Precedence (low -> high): these defaults <- this file <- env (CLAUDE_MEMORY_*) <- CLI flags.
-# Env mirrors nested keys, e.g. CLAUDE_MEMORY_RETRIEVAL_THRESHOLD, CLAUDE_MEMORY_QDRANT_HNSW_M.
+    return f"""# sup-mem configuration — https://github.com/kiranjose/sup-mem
+# Precedence (low -> high): these defaults <- this file <- env (SUP_MEM_*) <- CLI flags.
+# Env mirrors nested keys, e.g. SUP_MEM_RETRIEVAL_THRESHOLD, SUP_MEM_QDRANT_HNSW_M.
 
 backend = "{c.backend}"   # "sqlite_fts" (default, no deps) | "qdrant" (vector) | "pgvector"
 

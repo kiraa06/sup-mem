@@ -10,9 +10,9 @@ from collections.abc import Callable
 
 import pytest
 
-from claude_memory.backends import get_backend
-from claude_memory.config import Config
-from claude_memory.hook import user_prompt_submit as hook
+from sup_mem.backends import get_backend
+from sup_mem.config import Config
+from sup_mem.hook import user_prompt_submit as hook
 
 
 @pytest.mark.slow
@@ -41,8 +41,8 @@ def test_fts_query_latency_on_10k_records(make_config: Callable[..., Config]) ->
 def test_tier1_skip_is_cheap(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("CLAUDE_MEMORY_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("CLAUDE_MEMORY_LOGGING_RETRIEVAL_LOG", "false")
+    monkeypatch.setenv("SUP_MEM_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SUP_MEM_LOGGING_RETRIEVAL_LOG", "false")
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": "thanks!"})))
     hook.main()  # warm imports
     capsys.readouterr()

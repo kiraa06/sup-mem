@@ -16,24 +16,24 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from claude_memory.backends.base import MemoryBackend, ProgressCallback
-from claude_memory.embedding import get_embedder
-from claude_memory.embedding.base import (
+from sup_mem.backends.base import MemoryBackend, ProgressCallback
+from sup_mem.embedding import get_embedder
+from sup_mem.embedding.base import (
     Embedder,
     EmbeddingError,
     EmbeddingMeta,
     provider_is_hook_safe,
 )
-from claude_memory.models import Hit, Metadata
+from sup_mem.models import Hit, Metadata
 
 if TYPE_CHECKING:
-    from claude_memory.config import Config
+    from sup_mem.config import Config
 
 _NAMESPACE = uuid.UUID("6f9619ff-8b86-d011-b42d-00cf4fc964ff")  # stable id namespace
-_META_ID = str(uuid.uuid5(_NAMESPACE, "__claude_memory_meta__"))
+_META_ID = str(uuid.uuid5(_NAMESPACE, "__sup_mem_meta__"))
 _META_FLAG = "__cm_meta__"
 _WORD_RE = re.compile(r"\w", re.UNICODE)
-_REINDEX_HINT = "Run `claude-memory reindex` to re-embed the store with the current model."
+_REINDEX_HINT = "Run `sup-mem reindex` to re-embed the store with the current model."
 
 
 def _now_iso() -> str:
@@ -80,7 +80,7 @@ class QdrantBackend(MemoryBackend):
         return self._stored_meta
 
     def _configured_identity(self) -> tuple[str, str]:
-        from claude_memory.embedding import providers
+        from sup_mem.embedding import providers
 
         provider = self._config.embedding.provider
         spec = providers.SPEC_BY_NAME.get(provider)
@@ -150,7 +150,7 @@ class QdrantBackend(MemoryBackend):
     def initialize(self) -> EmbeddingMeta:
         """Create the collection (if needed) and record the embedding meta (I7); returns it.
 
-        Called by `claude-memory setup` — constructs the embedder to learn the vector `dim`.
+        Called by `sup-mem setup` — constructs the embedder to learn the vector `dim`.
         """
         return self._ensure_writable().meta
 

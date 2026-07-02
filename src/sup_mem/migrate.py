@@ -1,8 +1,8 @@
-"""Migrate Claude Code's built-in file memories into claude-memory.
+"""Migrate Claude Code's built-in file memories into sup-mem.
 
 Claude Code's native memory lives at ``~/.claude/projects/<project-slug>/memory/*.md`` — one
 fact per file with frontmatter (``name`` / ``description`` / ``metadata.type``) plus a
-``MEMORY.md`` index per project. This copies those facts into the claude-memory store with
+``MEMORY.md`` index per project. This copies those facts into the sup-mem store with
 full provenance (source file, topic, type + project tags) so the hook and ``recall`` work
 over them.
 
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from claude_memory.backends.base import MemoryBackend
+    from sup_mem.backends.base import MemoryBackend
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _INDEX_FILENAME = "MEMORY.md"

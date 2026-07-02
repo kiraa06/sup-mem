@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from claude_memory.embedding.base import (
+from sup_mem.embedding.base import (
     HOOK_SAFE_PROVIDERS,
     Embedder,
     EmbeddingError,
@@ -17,7 +17,7 @@ from claude_memory.embedding.base import (
 )
 
 if TYPE_CHECKING:
-    from claude_memory.config import Config
+    from sup_mem.config import Config
 
 __all__ = [
     "HOOK_SAFE_PROVIDERS",
@@ -31,12 +31,12 @@ __all__ = [
 
 def get_embedder(config: Config) -> Embedder:
     """Build the configured embedder. Raises ``EmbeddingError`` if none is configured."""
-    from claude_memory.embedding import providers
+    from sup_mem.embedding import providers
 
     provider = config.embedding.provider
     if not provider:
         raise EmbeddingError(
-            "No embedding provider configured. Run: claude-memory setup --backend qdrant"
+            "No embedding provider configured. Run: sup-mem setup --backend qdrant"
         )
     spec = providers.SPEC_BY_NAME.get(provider)
     if spec is None:

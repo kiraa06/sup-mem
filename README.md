@@ -1,9 +1,11 @@
-# claude-memory
+# sup-mem
+
+[![CI](https://github.com/kiranjose/sup-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/kiranjose/sup-mem/actions/workflows/ci.yml)
 
 **A self-hosted, pluggable global memory layer for Claude that persists context across sessions — model-free and Docker-free by default, with ultra-fast per-turn retrieval.**
 
 <!-- 20-second demo -->
-> **Demo:** _(asciicast placeholder — record with [asciinema](https://asciinema.org): `claude-memory init` → chat in Claude Code → watch relevant memory get injected automatically → `remember that…` → recall it next session.)_
+> **Demo:** _(asciicast placeholder — record with [asciinema](https://asciinema.org): `sup-mem init` → chat in Claude Code → watch relevant memory get injected automatically → `remember that…` → recall it next session.)_
 >
 > `![demo](docs/demo.gif)` _(add the GIF/cast here)_
 
@@ -19,7 +21,7 @@ Pick the row that matches your scale. **Most people should start with the defaul
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/\
-kiranjose/claude-memory/main/install.sh | sh
+kiranjose/sup-mem/main/install.sh | sh
 ```
 
 Zero services, zero models. Keyword (BM25) retrieval in a single embedded SQLite file. Ready in seconds.
@@ -28,7 +30,7 @@ Zero services, zero models. Keyword (BM25) retrieval in a single embedded SQLite
 
 ```bash
 # after the default install:
-claude-memory setup --backend qdrant --yes
+sup-mem setup --backend qdrant --yes
 ```
 
 Brings up Qdrant (Docker), auto-detects a local embedder, ranks **by meaning**. One line, non-interactive.
@@ -36,7 +38,7 @@ Brings up Qdrant (Docker), auto-detects a local embedder, ranks **by meaning**. 
 </td></tr>
 </table>
 
-> **Which one?** Use the **FTS default until you have ~10k+ memories** (or you specifically want semantic/paraphrase matching). Then switch with `claude-memory setup --backend qdrant --yes`. Your `remember`/`recall` habits don't change — only the backend does.
+> **Which one?** Use the **FTS default until you have ~10k+ memories** (or you specifically want semantic/paraphrase matching). Then switch with `sup-mem setup --backend qdrant --yes`. Your `remember`/`recall` habits don't change — only the backend does.
 
 Then **restart Claude Code** so it loads the new hook + MCP server.
 
@@ -74,7 +76,7 @@ The hook is a **short-lived process that never loads a model**: on the FTS path 
 
 `init`/`setup` merge — **never clobber** — your Claude Code config:
 
-- **Hooks** → `~/.claude/settings.json` under `hooks` (a `UserPromptSubmit` entry and a `SessionStart` entry). Your existing hooks and other keys are preserved; re-running is idempotent, and the prior file is backed up as `settings.json.claude-memory.bak`.
+- **Hooks** → `~/.claude/settings.json` under `hooks` (a `UserPromptSubmit` entry and a `SessionStart` entry). Your existing hooks and other keys are preserved; re-running is idempotent, and the prior file is backed up as `settings.json.sup-mem.bak`.
 - **MCP server** → registered via `claude mcp add --scope user` into `~/.claude.json` under `mcpServers` (falls back to a direct, non-clobbering merge if the `claude` CLI isn't on PATH).
 
 Claude Code does not hot-reload config — **restart** after `init`/`setup`. Honors `CLAUDE_CONFIG_DIR`.
@@ -92,7 +94,7 @@ The two MCP tools (their descriptions are the control surface Claude decides fro
 >
 > **The embedding model that *wrote* the store and the one that *reads* it must be identical.** Vectors from different models are not comparable — mixing them silently returns garbage.
 >
-> claude-memory records `(provider, model, dim)` inside the store and **enforces** it: `claude-memory doctor` **exits non-zero** on a mismatch, and `store`/`search` refuse rather than corrupt results. If you change models, run **`claude-memory reindex`** to re-embed everything with the new one. (Not applicable to the SQLite FTS default — it uses no model.)
+> sup-mem records `(provider, model, dim)` inside the store and **enforces** it: `sup-mem doctor` **exits non-zero** on a mismatch, and `store`/`search` refuse rather than corrupt results. If you change models, run **`sup-mem reindex`** to re-embed everything with the new one. (Not applicable to the SQLite FTS default — it uses no model.)
 
 ---
 
@@ -102,10 +104,10 @@ Retrieval quality is a **dial you tune on your own data** — and we give you th
 
 - **`retrieval.threshold`** (0..1, default `0.35`): raise to inject less (higher precision), lower to inject more (higher recall).
 - **`retrieval.k`** (default `6`): max memories injected/returned per turn.
-- **Retrieval log** (on by default): every turn appends `(query, injected_ids, scores, tier)` to `~/.claude-memory/retrieval.jsonl`. Eyeball it to see what's being injected and where to set the threshold. Turn off with `logging.retrieval_log = false`.
+- **Retrieval log** (on by default): every turn appends `(query, injected_ids, scores, tier)` to `~/.sup-mem/retrieval.jsonl`. Eyeball it to see what's being injected and where to set the threshold. Turn off with `logging.retrieval_log = false`.
 - **Tier-1 skip/cue patterns**: fully configurable regex lists — the skip-gate short-circuits trivial turns but never decides whether a *relevant* memory exists.
 
-Everything lives in `~/.claude-memory/config.toml` (written on `init`, every knob documented). Inspect the topic index anytime with `claude-memory manifest`; check health with `claude-memory doctor`.
+Everything lives in `~/.sup-mem/config.toml` (written on `init`, every knob documented). Inspect the topic index anytime with `sup-mem manifest`; check health with `sup-mem doctor`.
 
 ## Backends
 
@@ -115,7 +117,7 @@ Everything lives in `~/.claude-memory/config.toml` (written on `init`, every kno
 | Ranks by | keywords (BM25) | **meaning** (vector kNN) | meaning (vector kNN) |
 | Best for | up to ~10k memories | 10k+ / semantic recall | existing Postgres shops |
 | Model required | no | yes (local or hosted) | yes |
-| Command | `claude-memory init` | `claude-memory setup --backend qdrant` | _interface reserved_ |
+| Command | `sup-mem init` | `sup-mem setup --backend qdrant` | _interface reserved_ |
 
 **Embedders** (auto-detected by priority on `setup`, or pin one): Ollama · fastembed (local ONNX, CPU) · TEI · Voyage · OpenAI. Hosted options warn (network + cost + data leaves your box).
 
@@ -136,13 +138,13 @@ Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · 
 
 | Command | Does |
 |---|---|
-| `claude-memory init` | Create the SQLite FTS store, write config + pinned-facts, register with Claude Code. |
-| `claude-memory setup --backend qdrant [--yes]` | Bring up Qdrant, detect the embedder, create the collection, register. |
-| `claude-memory migrate-native [--dry-run]` | Copy Claude Code's built-in file memories (`~/.claude/projects/*/memory`) into the store. Copy-only, idempotent — re-run anytime to pick up stragglers. |
-| `claude-memory doctor` | Backend/service health; enforce the model-consistency contract. |
-| `claude-memory reindex` | Re-embed the store with the current model (vector backends). |
-| `claude-memory serve` | Run the long-lived MCP server. |
-| `claude-memory manifest` | Print/refresh the topic manifest. |
+| `sup-mem init` | Create the SQLite FTS store, write config + pinned-facts, register with Claude Code. |
+| `sup-mem setup --backend qdrant [--yes]` | Bring up Qdrant, detect the embedder, create the collection, register. |
+| `sup-mem migrate-native [--dry-run]` | Copy Claude Code's built-in file memories (`~/.claude/projects/*/memory`) into the store. Copy-only, idempotent — re-run anytime to pick up stragglers. |
+| `sup-mem doctor` | Backend/service health; enforce the model-consistency contract. |
+| `sup-mem reindex` | Re-embed the store with the current model (vector backends). |
+| `sup-mem serve` | Run the long-lived MCP server. |
+| `sup-mem manifest` | Print/refresh the topic manifest. |
 
 ## Development
 

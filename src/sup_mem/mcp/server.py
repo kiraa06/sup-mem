@@ -4,7 +4,7 @@ The two tool DESCRIPTIONS are the control surface: Claude decides when to call t
 these strings + the conversation + the injected context + the session manifest. They are
 shipped essentially verbatim from the handover — edit with care.
 
-Started via ``claude-memory serve``. The process is long-lived and holds the backend (and, for
+Started via ``sup-mem serve``. The process is long-lived and holds the backend (and, for
 vector backends, the in-process embedder) warm, so the per-prompt hook can borrow that warmth
 instead of loading anything itself (I2). Also usable from Claude Desktop via MCP config.
 """
@@ -13,14 +13,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from claude_memory.backends import get_backend
-from claude_memory.config import load_config
-from claude_memory.models import Metadata
+from sup_mem.backends import get_backend
+from sup_mem.config import load_config
+from sup_mem.models import Metadata
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-    from claude_memory.config import Config
+    from sup_mem.config import Config
 
 REMEMBER_DESCRIPTION = (
     "Store a durable fact, decision, preference, or correction that should persist across "
@@ -75,7 +75,7 @@ def build_server(config: Config | None = None) -> FastMCP:
 
     resolved = config or load_config()
     tools = MemoryTools(resolved)
-    server = FastMCP("claude-memory")
+    server = FastMCP("sup-mem")
 
     @server.tool(name="remember", description=REMEMBER_DESCRIPTION)
     def remember(text: str, tags: list[str] | None = None, source: str | None = None) -> str:

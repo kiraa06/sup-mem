@@ -13,21 +13,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from claude_memory.embedding import providers
-from claude_memory.embedding.base import EmbeddingError
+from sup_mem.embedding import providers
+from sup_mem.embedding.base import EmbeddingError
 
 if TYPE_CHECKING:
-    from claude_memory.config import Config
+    from sup_mem.config import Config
 
 Logger = Callable[[str], None]
 
 REMEDIATION = (
     "No embedding provider is available. Pick one of:\n"
-    "  • pip install 'claude-memory[qdrant]'   (bundles the fastembed CPU model — no server)\n"
+    "  • pip install 'sup-mem[qdrant]'   (bundles the fastembed CPU model — no server)\n"
     "  • run Ollama and: ollama pull nomic-embed-text\n"
     "  • start a TEI server and set TEI_URL\n"
     "  • set VOYAGE_API_KEY (hosted) or OPENAI_API_KEY (hosted)\n"
-    "Then re-run: claude-memory setup --backend qdrant"
+    "Then re-run: sup-mem setup --backend qdrant"
 )
 
 

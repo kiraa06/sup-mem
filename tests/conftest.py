@@ -1,7 +1,7 @@
 """Shared pytest fixtures.
 
 Every fixture points ``data_dir`` at a tmp path so tests never read or write the developer's
-real ``~/.claude-memory`` and never pick up ambient config/env.
+real ``~/.sup-mem`` and never pick up ambient config/env.
 """
 
 from __future__ import annotations
@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from claude_memory.config import ENV_PREFIX, Config, load_config
+from sup_mem.config import ENV_PREFIX, Config, load_config
 
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Strip any CLAUDE_MEMORY_* env vars so the developer's shell can't skew a test run."""
+    """Strip any SUP_MEM_* env vars so the developer's shell can't skew a test run."""
     for key in list(__import__("os").environ):
         if key.startswith(ENV_PREFIX):
             monkeypatch.delenv(key, raising=False)
@@ -24,7 +24,7 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def data_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "claude-memory"
+    d = tmp_path / "sup-mem"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

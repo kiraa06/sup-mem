@@ -20,10 +20,10 @@ import urllib.request
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from claude_memory.embedding.base import Embedder, EmbeddingMeta
+from sup_mem.embedding.base import Embedder, EmbeddingMeta
 
 if TYPE_CHECKING:
-    from claude_memory.config import Config
+    from sup_mem.config import Config
 
 _PROBE_TIMEOUT = 2.0
 _EMBED_TIMEOUT = 60.0

@@ -1,9 +1,9 @@
-# Brought up only by `claude-memory setup --backend qdrant`. The service stays warm
+# Brought up only by `sup-mem setup --backend qdrant`. The service stays warm
 # (restart: unless-stopped) so the per-prompt hook borrows its warmth and never spins it up (I2).
 services:
   qdrant:
     image: qdrant/qdrant:v1.12.4
-    container_name: claude-memory-qdrant
+    container_name: sup-mem-qdrant
     restart: unless-stopped
     ports:
       - "6333:6333"  # REST/HTTP

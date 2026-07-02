@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from claude_memory.config import Config
-from claude_memory.mcp import server as mcp_server
+from sup_mem.config import Config
+from sup_mem.mcp import server as mcp_server
 
 
 def test_remember_then_recall(make_config: Callable[..., Config]) -> None:

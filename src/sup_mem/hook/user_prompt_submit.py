@@ -21,11 +21,11 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
-from claude_memory.config import load_config
+from sup_mem.config import load_config
 
 if TYPE_CHECKING:
-    from claude_memory.config import Config
-    from claude_memory.models import Hit
+    from sup_mem.config import Config
+    from sup_mem.models import Hit
 
 _MEMORY_HEADER = "# Long-term memory (auto-retrieved for this turn)"
 _PINNED_HEADER = "# Pinned facts"
@@ -61,7 +61,7 @@ def _should_skip(prompt: str, config: Config) -> bool:
 
 def _retrieve(prompt: str, config: Config) -> list[Hit]:
     # LAZY import — this line must never execute on the Tier-1 skip path (I2).
-    from claude_memory.backends import get_backend
+    from sup_mem.backends import get_backend
 
     backend = get_backend(config)
     try:

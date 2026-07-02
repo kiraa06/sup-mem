@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from claude_memory import commands
-from claude_memory.config import load_config
-from claude_memory.hook import user_prompt_submit as hook
-from claude_memory.mcp.server import MemoryTools
+from sup_mem import commands
+from sup_mem.config import load_config
+from sup_mem.hook import user_prompt_submit as hook
+from sup_mem.mcp.server import MemoryTools
 
 
 def test_init_remember_then_hook_retrieves(
@@ -25,8 +25,12 @@ def test_init_remember_then_hook_retrieves(
     claude_dir = tmp_path / "claude"
     cfg = load_config(overrides={"data_dir": str(data_dir)})
 
-    # 1) init the default store + register with Claude Code (scratch config dir).
-    assert commands.cmd_init(cfg, claude_dir=claude_dir) == 0
+    # 1) init the default store + register with Claude Code (scratch config dir; use_cli=False
+    # keeps the test hermetic — never shells out to the real `claude` binary).
+    claude_json = claude_dir / ".claude.json"
+    assert (
+        commands.cmd_init(cfg, claude_dir=claude_dir, claude_json=claude_json, use_cli=False) == 0
+    )
     assert (data_dir / "memory.db").exists()
     capsys.readouterr()  # flush init's console output
 
@@ -42,7 +46,7 @@ def test_init_remember_then_hook_retrieves(
         tools.close()
 
     # 3) the per-prompt hook (front-door A) injects it for a relevant prompt.
-    monkeypatch.setenv("CLAUDE_MEMORY_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SUP_MEM_DATA_DIR", str(data_dir))
     monkeypatch.setattr(
         "sys.stdin",
         io.StringIO(json.dumps({"prompt": "how does our staging deploy strategy use deploy.sh?"})),
