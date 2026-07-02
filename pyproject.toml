@@ -1,6 +1,6 @@
 [project]
 name = "sup-mem"
-version = "0.6.1"
+version = "0.7.0"
 description = "A self-hosted, pluggable global memory layer for Claude that persists context across sessions."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,6 +36,7 @@ sup-mem = "sup_mem.cli:main"
 sup-mem-hook-userprompt = "sup_mem.hook.user_prompt_submit:main"
 sup-mem-hook-session = "sup_mem.hook.session_start:main"
 sup-mem-hook-stop = "sup_mem.hook.stop:main"
+sup-mem-hook-precompact = "sup_mem.hook.pre_compact:main"
 
 [project.urls]
 Homepage = "https://github.com/kiraa06/sup-mem"

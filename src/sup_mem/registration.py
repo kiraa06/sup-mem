@@ -31,7 +31,10 @@ HOOK_EVENTS: dict[str, str] = {
     "UserPromptSubmit": "sup-mem-hook-userprompt",
     "SessionStart": "sup-mem-hook-session",
     "Stop": "sup-mem-hook-stop",  # the outcome loop's attribution pass (PHASE6)
+    "PreCompact": "sup-mem-hook-precompact",  # the compaction lifeboat (PHASE10)
 }
+# Per-event settings.json timeouts (seconds); PreCompact runs a headless model call.
+HOOK_TIMEOUTS: dict[str, int] = {"PreCompact": 120}
 MCP_SERVER_NAME = "sup-mem"
 
 
@@ -99,7 +102,10 @@ def _merge_hooks(settings_path: Path) -> bool:
             hooks[event] = entries
         if _entries_have_command(entries, command, script):
             continue  # already registered (tolerant of bare-name vs abs-path)
-        entries.append({"hooks": [{"type": "command", "command": command}]})
+        hook_entry: dict[str, Any] = {"type": "command", "command": command}
+        if event in HOOK_TIMEOUTS:
+            hook_entry["timeout"] = HOOK_TIMEOUTS[event]
+        entries.append({"hooks": [hook_entry]})
         changed = True
     if changed:
         _atomic_write_json(settings_path, data)

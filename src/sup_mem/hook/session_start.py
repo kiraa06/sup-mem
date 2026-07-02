@@ -13,6 +13,10 @@ from sup_mem.config import load_config
 
 
 def main() -> int:
+    import os
+
+    if os.environ.get("SUP_MEM_CAPTURE"):
+        return 0  # inside the PreCompact extractor's child session (PHASE10 C4)
     with contextlib.suppress(Exception):
         sys.stdin.read()  # drain the hook payload (unused today)
         config = load_config()

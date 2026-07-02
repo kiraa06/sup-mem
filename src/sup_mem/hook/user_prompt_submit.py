@@ -157,6 +157,10 @@ def _emit(parts: list[str]) -> None:
 
 
 def main() -> int:
+    import os
+
+    if os.environ.get("SUP_MEM_CAPTURE"):
+        return 0  # inside the PreCompact extractor's child session — do nothing (PHASE10 C4)
     try:
         data = _read_stdin()
         prompt = str(data.get("prompt", ""))

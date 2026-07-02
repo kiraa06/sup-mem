@@ -17,6 +17,10 @@ from pathlib import Path
 
 
 def main() -> int:
+    import os
+
+    if os.environ.get("SUP_MEM_CAPTURE"):
+        return 0  # inside the PreCompact extractor's child session (PHASE10 C4)
     with contextlib.suppress(Exception):
         raw = sys.stdin.read()
         data = json.loads(raw) if raw.strip() else {}

@@ -145,6 +145,21 @@ class LedgerConfig:
 
 
 @dataclass
+class CaptureConfig:
+    """PreCompact capture — the compaction lifeboat (docs/PHASE10-CAPTURE.md).
+
+    COSTS TOKENS: one `capture.model` call per compaction (rare). Disable with enabled=false.
+    """
+
+    enabled: bool = True
+    model: str = "haiku"  # claude CLI model alias/id for the extraction call
+    max_memories: int = 8  # cap on facts stored per compaction
+    max_transcript_chars: int = 60_000  # tail budget piped to the extractor
+    per_turn_chars: int = 2_000  # cap per rendered turn so one giant turn can't eat the budget
+    timeout_seconds: int = 90  # extraction subprocess timeout (fail-open past it)
+
+
+@dataclass
 class ArchivalConfig:
     """Evidence-based cold tier with size caps (docs/PHASE9-ARCHIVAL.md A1–A6)."""
 
@@ -195,6 +210,7 @@ class Config:
     maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
     provenance: ProvenanceConfig = field(default_factory=ProvenanceConfig)
     archival: ArchivalConfig = field(default_factory=ArchivalConfig)
+    capture: CaptureConfig = field(default_factory=CaptureConfig)
 
     # --- Derived paths (never serialized) -------------------------------------------------
     @property
@@ -466,4 +482,16 @@ superseded_after_days = {c.archival.superseded_after_days}
 quarantined_after_days = {c.archival.quarantined_after_days}
 decay_min_age_days = {c.archival.decay_min_age_days}
 keep_tag = "{c.archival.keep_tag}"
+
+[capture]
+# PreCompact capture (docs/PHASE10-CAPTURE.md): just before Claude Code compacts a session,
+# a headless `claude -p` call distills the transcript tail into durable memories so they
+# survive compaction. COSTS TOKENS (one small-model call per compaction). Captured memories
+# are tagged auto-capture and are judged by the outcome loop like everything else.
+enabled = {_b(c.capture.enabled)}
+model = "{c.capture.model}"
+max_memories = {c.capture.max_memories}
+max_transcript_chars = {c.capture.max_transcript_chars}
+per_turn_chars = {c.capture.per_turn_chars}
+timeout_seconds = {c.capture.timeout_seconds}
 """
