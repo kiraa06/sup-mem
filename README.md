@@ -71,6 +71,8 @@ brew tap kiraa06/sup-mem && brew install sup-mem && sup-mem init
 > **Which one?** Use the **FTS default until you have ~10k+ memories** (or you specifically want semantic/paraphrase matching). Then switch with `sup-mem setup --backend qdrant --yes`. Your `remember`/`recall` habits don't change — only the backend does.
 
 > **Which host?** `sup-mem init` auto-detects installed hosts (**Claude Code, Codex CLI, Gemini CLI**) and wires each — hooks + MCP server, non-clobbering, with a `.bak`. Scope it with `sup-mem init --client codex` (or `--client all`). The store also works from any other MCP client (Cursor, Zed, Claude Desktop) via the `sup-mem` MCP server; the outcome loop needs one of the three hooked hosts.
+>
+> ℹ️ **"Gemini CLI" means the `gemini` terminal command — not [Antigravity](https://antigravity.google), Google's agent IDE.** Antigravity has no per-prompt hook, so injection and the outcome loop can't run there; you can still register the `sup-mem` MCP server in its `mcp_config.json` by hand for tool-based `recall`/`remember`.
 
 Then **restart the host(s)** (Claude Code / Codex / Gemini) so they load the new hook + MCP server.
 
