@@ -37,6 +37,12 @@ Brings up Qdrant (Docker), auto-detects a local embedder, ranks **by meaning**. 
 </td></tr>
 </table>
 
+Already have a Python tool manager? Same result:
+
+```bash
+uv tool install sup-mem && sup-mem init      # or: pipx install sup-mem && sup-mem init
+```
+
 > **Which one?** Use the **FTS default until you have ~10k+ memories** (or you specifically want semantic/paraphrase matching). Then switch with `sup-mem setup --backend qdrant --yes`. Your `remember`/`recall` habits don't change — only the backend does.
 
 Then **restart Claude Code** so it loads the new hook + MCP server.
