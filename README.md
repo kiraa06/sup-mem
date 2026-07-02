@@ -4,10 +4,9 @@
 
 **A self-hosted, pluggable global memory layer for Claude that persists context across sessions — model-free and Docker-free by default, with ultra-fast per-turn retrieval.**
 
-<!-- 20-second demo -->
-> **Demo:** _(asciicast placeholder — record with [asciinema](https://asciinema.org): `sup-mem init` → chat in Claude Code → watch relevant memory get injected automatically → `remember that…` → recall it next session.)_
->
-> `![demo](docs/demo.gif)` _(add the GIF/cast here)_
+![sup-mem demo: status, automatic per-prompt injection, bitemporal --as-of recall, provenance verify](docs/demo.gif)
+
+<sub>20 seconds, real binaries: `status` (all wired) → the hook injecting memory into a prompt → `recall --as-of --diff-now` (what we believed *then* vs now) → `verify` (tamper-evident chain). Re-render with `vhs docs/demo.tape` against a seeded demo store.</sub>
 
 ---
 
