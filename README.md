@@ -1,6 +1,10 @@
-# sup-mem
+<div align="center">
+  <img src="https://raw.githubusercontent.com/kiraa06/sup-mem/main/docs/logo.png" alt="SupMem" width="380">
 
 [![CI](https://github.com/kiraa06/sup-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/kiraa06/sup-mem/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/sup-mem)](https://pypi.org/project/sup-mem/)
+
+</div>
 
 **A self-hosted memory layer for Claude Code that persists context across sessions — and, unlike every other memory tool, *measures whether its memories actually helped*.**
 
