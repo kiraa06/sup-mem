@@ -44,6 +44,15 @@ def build_parser() -> argparse.ArgumentParser:
         "-y", "--yes", action="store_true", help="Non-interactive; auto-pick the embedder."
     )
 
+    p_migrate = sub.add_parser(
+        "migrate-native",
+        help="Copy Claude Code's built-in file memories (~/.claude/projects/*/memory) "
+        "into the store. Copy-only and idempotent.",
+    )
+    p_migrate.add_argument(
+        "--dry-run", action="store_true", help="List what would be migrated without storing."
+    )
+
     sub.add_parser(
         "doctor", help="Report backend/service health and enforce embedding-model consistency."
     )
@@ -71,6 +80,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return commands.cmd_init(config)
     if args.command == "setup":
         return commands.cmd_setup(config, args.backend, assume_yes=args.yes)
+    if args.command == "migrate-native":
+        return commands.cmd_migrate_native(config, dry_run=args.dry_run)
     if args.command == "doctor":
         return commands.cmd_doctor(config)
     if args.command == "reindex":

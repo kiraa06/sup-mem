@@ -124,6 +124,48 @@ def cmd_manifest(config: Config) -> int:
     return 0
 
 
+def cmd_migrate_native(
+    config: Config, *, projects_dir: Path | None = None, dry_run: bool = False
+) -> int:
+    """Copy Claude Code's built-in file memories into the claude-memory store (copy-only)."""
+    from rich.console import Console
+
+    from claude_memory.backends import get_backend
+    from claude_memory.migrate import migrate_native
+    from claude_memory.registration import claude_config_dir
+
+    console = Console()
+    source_dir = projects_dir if projects_dir is not None else claude_config_dir() / "projects"
+    if not source_dir.is_dir():
+        console.print(f"[yellow]![/] no native memory found ({source_dir} does not exist)")
+        return 0
+
+    backend = get_backend(config)
+    try:
+        report = migrate_native(backend, source_dir, dry_run=dry_run)
+    finally:
+        backend.close()
+
+    verb = "would migrate" if dry_run else "migrated"
+    for source, kind, chars in report["migrated"]:
+        console.print(f"  [{kind:9}] {source}  ({chars} chars)")
+    for source in report["skipped_empty"]:
+        console.print(f"  [dim]skipped (empty)[/] {source}")
+    console.print(
+        f"[green]✓[/] {verb} {len(report['migrated'])} memories from {source_dir}"
+        + (
+            f" — {report['new']} new, "
+            f"{len(report['migrated']) - report['new']} already present; "
+            f"store now holds {report['total']}"
+            if not dry_run
+            else " (dry run — nothing stored)"
+        )
+    )
+    if not dry_run:
+        console.print("  source files untouched; re-running is safe (dedupes on content+source)")
+    return 0
+
+
 PINNED_FACTS_TEMPLATE = """# Pinned facts (Tier 0 — injected into EVERY turn, verbatim)
 #
 # Keep this short: a handful of durable, always-relevant facts. '#' lines are notes.

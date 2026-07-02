@@ -138,6 +138,7 @@ Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · 
 |---|---|
 | `claude-memory init` | Create the SQLite FTS store, write config + pinned-facts, register with Claude Code. |
 | `claude-memory setup --backend qdrant [--yes]` | Bring up Qdrant, detect the embedder, create the collection, register. |
+| `claude-memory migrate-native [--dry-run]` | Copy Claude Code's built-in file memories (`~/.claude/projects/*/memory`) into the store. Copy-only, idempotent — re-run anytime to pick up stragglers. |
 | `claude-memory doctor` | Backend/service health; enforce the model-consistency contract. |
 | `claude-memory reindex` | Re-embed the store with the current model (vector backends). |
 | `claude-memory serve` | Run the long-lived MCP server. |
