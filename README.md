@@ -3,6 +3,14 @@
 
 [![CI](https://github.com/kiraa06/sup-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/kiraa06/sup-mem/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/sup-mem)](https://pypi.org/project/sup-mem/)
+[![Python](https://img.shields.io/pypi/pyversions/sup-mem)](https://pypi.org/project/sup-mem/)
+[![License: MIT](https://img.shields.io/pypi/l/sup-mem)](https://github.com/kiraa06/sup-mem/blob/main/LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
+![Works with: Claude Code · Codex · Gemini CLI](https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Gemini%20CLI-6f42c1)
+![Platform: macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-informational)
+![MCP server](https://img.shields.io/badge/MCP-server-success)
+![Local-first](https://img.shields.io/badge/local--first-no%20cloud%20by%20default-2f9e44)
 
 </div>
 
@@ -215,6 +223,8 @@ that pays its own way? That's this.
 | Command | `sup-mem init` | `sup-mem setup --backend qdrant` | _interface reserved_ |
 
 **Embedders** (auto-detected by priority on `setup`, or pin one): Ollama · fastembed (local ONNX, CPU) · TEI · Voyage · OpenAI. Hosted options warn (network + cost + data leaves your box).
+
+> **Embedder strength is the recall floor.** The zero-config default, fastembed `bge-small-en-v1.5` (384-dim, CPU), nails clear matches but is weak on *abstract paraphrase* (a query with no shared words). For paraphrase-heavy recall, pin a stronger model — set `model = "BAAI/bge-base-en-v1.5"` under `[embedding]` in config (768-dim, still local CPU; the dimension is auto-detected) — or a hosted embedder (`voyage-3`, `text-embedding-3-*`). Retrieval quality is the model's, not the backend's: Qdrant's scores match the embedder's cosine exactly.
 
 ## Designed for optimization
 
