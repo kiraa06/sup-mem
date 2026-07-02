@@ -1,7 +1,7 @@
 [project]
 name = "sup-mem"
-version = "0.7.0"
-description = "A self-hosted, pluggable global memory layer for Claude that persists context across sessions."
+version = "0.8.0"
+description = "Self-hosted memory layer for Claude Code, Codex & Gemini CLI — with an outcome loop that measures whether its memories helped."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
