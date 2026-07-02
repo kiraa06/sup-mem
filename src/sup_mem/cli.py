@@ -28,9 +28,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
-    sub.add_parser(
+    p_init = sub.add_parser(
         "init",
-        help="Create the default SQLite FTS store and register the hook + MCP server.",
+        help="Create the SQLite FTS store and wire hooks + MCP into your coding host(s).",
+    )
+    p_init.add_argument(
+        "--client",
+        choices=["claude", "codex", "gemini", "all"],
+        help="Which host to wire (default: auto-detect installed: Claude Code, Codex, Gemini).",
     )
 
     p_setup = sub.add_parser("setup", help="Set up a backend (e.g. --backend qdrant).")
@@ -138,7 +143,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     from sup_mem import commands
 
     if args.command == "init":
-        return commands.cmd_init(config)
+        sel = args.client
+        clients = None if not sel else (["claude", "codex", "gemini"] if sel == "all" else [sel])
+        return commands.cmd_init(config, clients=clients)
     if args.command == "setup":
         return commands.cmd_setup(config, args.backend, assume_yes=args.yes)
     if args.command == "migrate-native":

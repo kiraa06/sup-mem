@@ -46,15 +46,16 @@ def _hook_commands(settings: dict[str, Any], event: str) -> list[str]:
 def collect_checks(
     config: Config, *, claude_dir: Path | None = None, claude_json: Path | None = None
 ) -> list[Check]:
-    from sup_mem.registration import HOOK_EVENTS, MCP_SERVER_NAME, claude_config_dir
+    from sup_mem.registration import CLAUDE_EVENTS, MCP_SERVER_NAME, SCRIPTS, claude_config_dir
 
     checks: list[Check] = []
     directory = claude_config_dir(claude_dir)
     settings = _load_json(directory / "settings.json")
     mcp_file = claude_json if claude_json is not None else Path.home() / ".claude.json"
 
-    # 1) hooks registered + their binaries exist
-    for event, script in HOOK_EVENTS.items():
+    # 1) hooks registered + their binaries exist (Claude Code wiring; `init` handles the rest)
+    for role, event in CLAUDE_EVENTS.items():
+        script = SCRIPTS[role]
         commands = [c for c in _hook_commands(settings, event) if script in c]
         if not commands:
             checks.append(Check(f"hook:{event}", False, "not registered", "run: sup-mem init"))

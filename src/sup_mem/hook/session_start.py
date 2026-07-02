@@ -10,6 +10,7 @@ import contextlib
 import sys
 
 from sup_mem.config import load_config
+from sup_mem.hook.emit import emit_context
 
 
 def main() -> int:
@@ -31,7 +32,7 @@ def main() -> int:
             backend.close()
 
         if text.strip():
-            sys.stdout.write(text + "\n")
+            emit_context(text)
     return 0
 
 

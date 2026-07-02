@@ -27,14 +27,33 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sup_mem.config import Config
 
-HOOK_EVENTS: dict[str, str] = {
-    "UserPromptSubmit": "sup-mem-hook-userprompt",
-    "SessionStart": "sup-mem-hook-session",
-    "Stop": "sup-mem-hook-stop",  # the outcome loop's attribution pass (PHASE6)
-    "PreCompact": "sup-mem-hook-precompact",  # the compaction lifeboat (PHASE10)
+# The four hook roles, each backed by one console script (shared across every client — the
+# stdin/stdout contract is identical; only the event *names* and config *location* differ).
+SCRIPTS: dict[str, str] = {
+    "user_prompt_submit": "sup-mem-hook-userprompt",
+    "session_start": "sup-mem-hook-session",
+    "stop": "sup-mem-hook-stop",  # the outcome loop's attribution pass (PHASE6)
+    "pre_compact": "sup-mem-hook-precompact",  # the compaction lifeboat (PHASE10)
 }
-# Per-event settings.json timeouts (seconds); PreCompact runs a headless model call.
-HOOK_TIMEOUTS: dict[str, int] = {"PreCompact": 120}
+# Per-role timeouts (seconds); PreCompact runs a headless model call.
+TIMEOUTS: dict[str, int] = {"pre_compact": 120}
+
+# canonical role -> event name in each client's config. Claude Code and Codex share the exact
+# event vocabulary (Codex cloned Claude's hook contract, JSON envelope and all); Gemini renames
+# them. Hook I/O is otherwise identical, so one script set serves all three.
+CLAUDE_EVENTS: dict[str, str] = {
+    "user_prompt_submit": "UserPromptSubmit",
+    "session_start": "SessionStart",
+    "stop": "Stop",
+    "pre_compact": "PreCompact",
+}
+CODEX_EVENTS: dict[str, str] = dict(CLAUDE_EVENTS)  # verbatim clone of Claude's event names
+GEMINI_EVENTS: dict[str, str] = {
+    "user_prompt_submit": "BeforeAgent",
+    "session_start": "SessionStart",
+    "stop": "AfterAgent",
+    "pre_compact": "PreCompress",
+}
 MCP_SERVER_NAME = "sup-mem"
 
 
@@ -88,28 +107,49 @@ def _entries_have_command(entries: list[Any], *commands: str) -> bool:
     return False
 
 
-def _merge_hooks(settings_path: Path) -> bool:
-    data = _load_json(settings_path)
+def _hook_command(script: str, env_client: str | None) -> str:
+    """Resolve the console script. For non-default clients, tag the invocation with the client
+    name so the hook picks the right stdout dialect + transcript parser (``SUP_MEM_CLIENT``).
+    Claude Code gets the bare command (no tag) — its path stays byte-identical to before."""
+    command = _resolve_command(script)
+    return f"env SUP_MEM_CLIENT={env_client} {command}" if env_client else command
+
+
+def _merge_hooks_into(data: dict[str, Any], events: dict[str, str], env_client: str | None) -> bool:
+    """Merge our hook entries into an in-memory Claude-Code-shaped ``hooks`` map. Returns changed?
+
+    ``events`` maps canonical role -> this client's event name. Codex's ``hooks.json`` and
+    Gemini's ``settings.json`` use the identical schema, so this one merger serves all three.
+    Pure (no I/O) so callers writing several sections into one file can do a single write.
+    """
     if not isinstance(data.get("hooks"), dict):
         data["hooks"] = {}
     hooks = data["hooks"]
     changed = False
-    for event, script in HOOK_EVENTS.items():
-        command = _resolve_command(script)
+    for role, event in events.items():
+        script = SCRIPTS[role]
+        command = _hook_command(script, env_client)
         entries = hooks.get(event)
         if not isinstance(entries, list):
             entries = []
             hooks[event] = entries
         if _entries_have_command(entries, command, script):
-            continue  # already registered (tolerant of bare-name vs abs-path)
+            continue  # already registered (tolerant of bare-name vs abs-path vs env-prefix)
         hook_entry: dict[str, Any] = {"type": "command", "command": command}
-        if event in HOOK_TIMEOUTS:
-            hook_entry["timeout"] = HOOK_TIMEOUTS[event]
+        if role in TIMEOUTS:
+            hook_entry["timeout"] = TIMEOUTS[role]
         entries.append({"hooks": [hook_entry]})
         changed = True
-    if changed:
-        _atomic_write_json(settings_path, data)
     return changed
+
+
+def merge_hooks_json(settings_path: Path, events: dict[str, str], env_client: str | None) -> bool:
+    """Non-clobbering, single-write merge of our hooks into a hooks JSON file (Claude, Codex)."""
+    data = _load_json(settings_path)
+    if _merge_hooks_into(data, events, env_client):
+        _atomic_write_json(settings_path, data)
+        return True
+    return False
 
 
 # --------------------------------------------------------------------------------------------
@@ -141,9 +181,8 @@ def _register_mcp_via_cli(command: str) -> bool | None:
     return added.returncode == 0
 
 
-def _merge_mcp_json(json_path: Path, command: str) -> bool:
-    """Non-clobbering merge into a Claude config file's top-level ``mcpServers``."""
-    data = _load_json(json_path)
+def _merge_mcp_into(data: dict[str, Any], command: str) -> bool:
+    """Merge our server into an in-memory top-level ``mcpServers`` map. Returns changed? Pure."""
     if not isinstance(data.get("mcpServers"), dict):
         data["mcpServers"] = {}
     servers = data["mcpServers"]
@@ -151,8 +190,16 @@ def _merge_mcp_json(json_path: Path, command: str) -> bool:
     if servers.get(MCP_SERVER_NAME) == desired:
         return False
     servers[MCP_SERVER_NAME] = desired
-    _atomic_write_json(json_path, data)
     return True
+
+
+def _merge_mcp_json(json_path: Path, command: str) -> bool:
+    """Non-clobbering merge into a Claude config file's top-level ``mcpServers``."""
+    data = _load_json(json_path)
+    if _merge_mcp_into(data, command):
+        _atomic_write_json(json_path, data)
+        return True
+    return False
 
 
 def register_into_claude_code(
@@ -166,7 +213,7 @@ def register_into_claude_code(
     directory = claude_config_dir(claude_dir)
     directory.mkdir(parents=True, exist_ok=True)
     settings_path = directory / "settings.json"
-    hooks_changed = _merge_hooks(settings_path)
+    hooks_changed = merge_hooks_json(settings_path, CLAUDE_EVENTS, None)
 
     command = _mcp_command()
     mcp_json = claude_json if claude_json is not None else Path.home() / ".claude.json"
@@ -179,9 +226,87 @@ def register_into_claude_code(
         mcp_target = str(mcp_json)
 
     return {
+        "client": "claude",
         "config_dir": str(directory),
         "settings_path": str(settings_path),
         "mcp_target": mcp_target,
+        "hooks_changed": hooks_changed,
+        "mcp_changed": mcp_changed,
+        "mcp_command": command,
+    }
+
+
+# --------------------------------------------------------------------------------------------
+# Codex CLI  →  ~/.codex/hooks.json (hooks) + ~/.codex/config.toml (MCP)
+# --------------------------------------------------------------------------------------------
+def _append_codex_mcp(config_toml: Path, command: str) -> tuple[bool, str]:
+    """Append an ``[mcp_servers.sup-mem]`` table to Codex's config.toml if absent.
+
+    Append-only + a ``.sup-mem.bak`` — never rewrites the user's existing TOML (no stdlib TOML
+    writer to round-trip it safely). A fresh top-level table at EOF is unambiguous.
+    """
+    import tomllib
+
+    existing: dict[str, Any] = {}
+    if config_toml.exists():
+        try:
+            existing = tomllib.loads(config_toml.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            existing = {}
+    servers = existing.get("mcp_servers")
+    if isinstance(servers, dict) and MCP_SERVER_NAME in servers:
+        return False, str(config_toml)  # already registered → idempotent
+    block = f'\n[mcp_servers.{MCP_SERVER_NAME}]\ncommand = "{command}"\nargs = ["serve"]\n'
+    config_toml.parent.mkdir(parents=True, exist_ok=True)
+    if config_toml.exists():
+        shutil.copy2(config_toml, config_toml.with_name(config_toml.name + ".sup-mem.bak"))
+    with config_toml.open("a", encoding="utf-8") as fh:
+        fh.write(block)
+    return True, str(config_toml)
+
+
+def register_into_codex(config: Config, *, codex_home: Path | None = None) -> dict[str, Any]:
+    """Merge our hooks (``hooks.json``) + MCP server (``config.toml``) into Codex CLI config.
+    Codex speaks Claude's exact hook dialect, so the same scripts/JSON envelope just work."""
+    home = codex_home if codex_home is not None else Path.home() / ".codex"
+    home.mkdir(parents=True, exist_ok=True)
+    hooks_path = home / "hooks.json"
+    hooks_changed = merge_hooks_json(hooks_path, CODEX_EVENTS, "codex")
+    command = _mcp_command()
+    mcp_changed, mcp_target = _append_codex_mcp(home / "config.toml", command)
+    return {
+        "client": "codex",
+        "config_dir": str(home),
+        "settings_path": str(hooks_path),
+        "mcp_target": mcp_target,
+        "hooks_changed": hooks_changed,
+        "mcp_changed": mcp_changed,
+        "mcp_command": command,
+    }
+
+
+# --------------------------------------------------------------------------------------------
+# Gemini CLI  →  ~/.gemini/settings.json (hooks + MCP, both in one JSON file)
+# --------------------------------------------------------------------------------------------
+def register_into_gemini(config: Config, *, gemini_home: Path | None = None) -> dict[str, Any]:
+    """Merge our hooks + MCP server into Gemini CLI's settings.json (same JSON schema as Claude;
+    event names are renamed via ``GEMINI_EVENTS`` and the hook emits the JSON-envelope dialect)."""
+    home = gemini_home if gemini_home is not None else Path.home() / ".gemini"
+    home.mkdir(parents=True, exist_ok=True)
+    settings_path = home / "settings.json"
+    # Hooks AND mcpServers both live in this one file — merge both in memory, then write ONCE,
+    # so the single ``.bak`` is the pristine original (two writes would clobber the first backup).
+    data = _load_json(settings_path)
+    hooks_changed = _merge_hooks_into(data, GEMINI_EVENTS, "gemini")
+    command = _mcp_command()
+    mcp_changed = _merge_mcp_into(data, command)
+    if hooks_changed or mcp_changed:
+        _atomic_write_json(settings_path, data)
+    return {
+        "client": "gemini",
+        "config_dir": str(home),
+        "settings_path": str(settings_path),
+        "mcp_target": str(settings_path),
         "hooks_changed": hooks_changed,
         "mcp_changed": mcp_changed,
         "mcp_command": command,

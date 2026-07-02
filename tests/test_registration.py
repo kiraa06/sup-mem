@@ -20,7 +20,9 @@ def test_init_creates_store_config_pinned_and_registers(tmp_path: Path) -> None:
     claude_json = claude_dir / ".claude.json"
     cfg = load_config(overrides={"data_dir": str(data_dir)})
 
-    rc = commands.cmd_init(cfg, claude_dir=claude_dir, claude_json=claude_json, use_cli=False)
+    rc = commands.cmd_init(
+        cfg, clients=["claude"], claude_dir=claude_dir, claude_json=claude_json, use_cli=False
+    )
     assert rc == 0
 
     assert (data_dir / "memory.db").exists()

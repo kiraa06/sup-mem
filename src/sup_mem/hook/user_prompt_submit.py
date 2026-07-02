@@ -22,6 +22,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from sup_mem.config import load_config
+from sup_mem.hook.emit import emit_context
 
 if TYPE_CHECKING:
     from sup_mem.config import Config
@@ -153,7 +154,7 @@ def _log(
 
 def _emit(parts: list[str]) -> None:
     if parts:
-        sys.stdout.write("\n\n".join(parts) + "\n")
+        emit_context("\n\n".join(parts))
 
 
 def main() -> int:

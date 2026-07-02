@@ -599,16 +599,23 @@ volumes:
 def cmd_init(
     config: Config,
     *,
+    clients: list[str] | None = None,
     claude_dir: Path | None = None,
     claude_json: Path | None = None,
+    codex_home: Path | None = None,
+    gemini_home: Path | None = None,
     use_cli: bool = True,
 ) -> int:
-    """Default one-liner: create the SQLite FTS store + register with Claude Code (§7)."""
+    """Default one-liner: create the SQLite FTS store + wire the hooks/MCP into the host(s).
+
+    ``clients`` selects which hosts to wire; ``None`` auto-detects installed ones (falling back
+    to Claude Code). Each host's registration is non-clobbering with a timestamped backup (§7).
+    """
     from rich.console import Console
 
     from sup_mem.backends import get_backend
+    from sup_mem.clients import CLIENTS, detect_installed, get_client
     from sup_mem.config import render_default_toml
-    from sup_mem.registration import register_into_claude_code
 
     console = Console()
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -618,20 +625,35 @@ def cmd_init(
         config.pinned_facts_path.write_text(PINNED_FACTS_TEMPLATE, encoding="utf-8")
     get_backend(config).close()  # creates the SQLite FTS schema
 
-    report = register_into_claude_code(
-        config, claude_dir=claude_dir, claude_json=claude_json, use_cli=use_cli
-    )
+    requested = clients if clients is not None else (detect_installed() or ["claude"])
+    seen: set[str] = set()
+    selected: list[str] = []
+    for name in requested:  # de-dup, drop unknowns, preserve order
+        if name in CLIENTS and name not in seen:
+            seen.add(name)
+            selected.append(name)
+
+    overrides: dict[str, dict[str, object]] = {
+        "claude": {"claude_dir": claude_dir, "claude_json": claude_json, "use_cli": use_cli},
+        "codex": {"codex_home": codex_home},
+        "gemini": {"gemini_home": gemini_home},
+    }
+
     console.print(f"[green]✓[/] sup-mem ready (SQLite FTS) — {config.data_dir}")
-    console.print(
-        f"  hooks      → {report['settings_path']} "
-        f"({'updated' if report['hooks_changed'] else 'already registered'})"
-    )
-    console.print(
-        f"  MCP server → {report['mcp_target']} "
-        f"({'updated' if report['mcp_changed'] else 'already registered'})"
-    )
     console.print(f"  pinned facts: {config.pinned_facts_path}")
-    console.print("[yellow]Restart Claude Code[/] to load the hook + MCP server.")
+    for name in selected:
+        report = get_client(name).register(config, **overrides.get(name, {}))
+        console.print(f"[bold]{name}[/]")
+        console.print(
+            f"  hooks      → {report['settings_path']} "
+            f"({'updated' if report['hooks_changed'] else 'already registered'})"
+        )
+        console.print(
+            f"  MCP server → {report['mcp_target']} "
+            f"({'updated' if report['mcp_changed'] else 'already registered'})"
+        )
+    restart = ", ".join(selected)
+    console.print(f"[yellow]Restart {restart}[/] to load the hook + MCP server.")
     return 0
 
 

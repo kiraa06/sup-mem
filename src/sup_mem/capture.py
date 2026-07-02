@@ -47,9 +47,9 @@ def _slug(text: str) -> str:
 
 def render_transcript_tail(transcript_path: Path, config: Config) -> str:
     """Newest main-chain turns rendered as USER:/ASSISTANT: text, within the char budget."""
-    from sup_mem.ledger import parse_transcript
+    from sup_mem.clients import active_client_name, get_client
 
-    turns = parse_transcript(transcript_path)
+    turns = get_client(active_client_name()).parse_transcript(transcript_path)
     if not turns:
         return ""
     budget = config.capture.max_transcript_chars

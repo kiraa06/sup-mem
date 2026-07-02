@@ -11,8 +11,8 @@ What sup-mem touches:
 
 | Surface | Access | Why |
 |---|---|---|
-| `~/.claude/settings.json`, `~/.claude.json` | merge-only writes, timestamped backups | registering hooks + the MCP server (`sup-mem init`) |
-| Claude Code session transcripts (`~/.claude/projects/**.jsonl`) | read-only | outcome attribution (Stop hook) + pre-compaction capture |
+| Host config for each host you `init`: `~/.claude/settings.json` + `~/.claude.json`, `~/.codex/{hooks.json,config.toml}`, `~/.gemini/settings.json` | merge-only writes (Codex's MCP block is append-only), timestamped `.sup-mem.bak` | registering hooks + the MCP server (`sup-mem init`) |
+| Session transcripts of the hosts you enable (Claude Code `~/.claude/projects/**.jsonl`; Codex `~/.codex/history.jsonl`; Gemini's session file) | read-only | outcome attribution (Stop / AfterAgent) + pre-compaction capture |
 | `~/.sup-mem/` | read/write | the store, ledger, archive, logs, config, HMAC key |
 
 ## Integrity guarantees (and their limits)

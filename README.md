@@ -6,7 +6,7 @@
 
 </div>
 
-**A self-hosted memory layer for Claude Code that persists context across sessions — and, unlike every other memory tool, *measures whether its memories actually helped*.**
+**A self-hosted memory layer for Claude Code, Codex, and Gemini CLI that persists context across sessions — and, unlike every other memory tool, *measures whether its memories actually helped*.**
 
 Every memory system stores and retrieves. sup-mem also closes the loop:
 
@@ -62,7 +62,9 @@ brew tap kiraa06/sup-mem && brew install sup-mem && sup-mem init
 
 > **Which one?** Use the **FTS default until you have ~10k+ memories** (or you specifically want semantic/paraphrase matching). Then switch with `sup-mem setup --backend qdrant --yes`. Your `remember`/`recall` habits don't change — only the backend does.
 
-Then **restart Claude Code** so it loads the new hook + MCP server.
+> **Which host?** `sup-mem init` auto-detects installed hosts (**Claude Code, Codex CLI, Gemini CLI**) and wires each — hooks + MCP server, non-clobbering, with a `.bak`. Scope it with `sup-mem init --client codex` (or `--client all`). The store also works from any other MCP client (Cursor, Zed, Claude Desktop) via the `sup-mem` MCP server; the outcome loop needs one of the three hooked hosts.
+
+Then **restart the host(s)** (Claude Code / Codex / Gemini) so they load the new hook + MCP server.
 
 ---
 
@@ -174,11 +176,14 @@ Everything lives in `~/.sup-mem/config.toml` (written on `init`, every knob docu
 
 ## How it compares
 
-Fair fight: mem0/Zep/Letta are excellent multi-platform memory systems, and Claude Code's
-native memory needs zero setup. sup-mem's bet is different — deep integration with one tool
-(Claude Code's hook lifecycle) buys capabilities a platform-agnostic layer can't have:
+Fair fight: mem0/Zep/Letta are excellent multi-platform memory systems, and native memories
+need zero setup. sup-mem's bet is coupling to hosts that expose the three things the loop
+needs — a per-prompt hook, an after-response hook, and the session transcript on disk. As of
+mid-2026 that's **Claude Code, Codex CLI, and Gemini CLI** (the CLI ecosystem converged on
+Claude Code's hook contract — Codex cloned it outright); the store itself works from **any
+MCP client**.
 
-| | sup-mem | mem0 / Zep / Letta | Claude Code native memory |
+| | sup-mem | mem0 / Zep / Letta | native memory |
 |---|---|---|---|
 | Stores & retrieves memories | ✓ | ✓ | ✓ |
 | **Measures whether an injected memory helped** (outcome ledger) | ✓ | ✗ | ✗ |
@@ -189,11 +194,15 @@ native memory needs zero setup. sup-mem's bet is different — deep integration 
 | Evidence-based decay + hard size caps | ✓ | partial | ✗ |
 | Survives context compaction (PreCompact capture) | ✓ | ✗ | ✗ |
 | Zero-infra default (no Docker, no model) | ✓ | varies (often hosted/vector) | ✓ |
-| Multi-platform / hosted offering | ✗ (Claude Code + Desktop MCP) | ✓ | ✗ |
+| **Full outcome loop runs on** | Claude Code · Codex · Gemini CLI | ✗ | ✗ |
+| Store usable from | any MCP client (local) | hosted SaaS + SDKs | its host only |
 | Semantic (vector) retrieval | opt-in (Qdrant) | ✓ default | ✗ |
 
-If you need memory across many agents/frameworks, use mem0 or Zep. If you live in Claude
-Code and want memory that's accountable for its context budget, that's what this is.
+The store works in any MCP client (Cursor, Zed, Claude Desktop, …). The **outcome loop** — the
+part that makes memory accountable for its context budget — lights up wherever the host exposes
+inject + after-response + transcript hooks: **Claude Code, Codex, and Gemini CLI** today. Need a
+hosted service across many frameworks? Reach for mem0 or Zep. Live in these CLIs and want memory
+that pays its own way? That's this.
 
 ## Backends
 
@@ -224,7 +233,7 @@ Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · 
 
 | Command | Does |
 |---|---|
-| `sup-mem init` | Create the SQLite FTS store, write config + pinned-facts, register with Claude Code. |
+| `sup-mem init` | Create the SQLite FTS store, write config + pinned-facts, wire hooks + MCP into detected hosts (`--client claude\|codex\|gemini\|all`). |
 | `sup-mem setup --backend qdrant [--yes]` | Bring up Qdrant, detect the embedder, create the collection, register. |
 | `sup-mem migrate-native [--dry-run]` | Copy Claude Code's built-in file memories (`~/.claude/projects/*/memory`) into the store. Copy-only, idempotent — re-run anytime to pick up stragglers. |
 | `sup-mem tune [--apply]` | Counterfactual threshold replay against recorded outcomes; recommends (and optionally applies) a better threshold. |

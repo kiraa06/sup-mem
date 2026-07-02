@@ -10,7 +10,7 @@ import pytest
 from sup_mem import commands, service
 from sup_mem.backends import get_backend
 from sup_mem.config import Config
-from sup_mem.registration import HOOK_EVENTS
+from sup_mem.registration import CLAUDE_EVENTS, SCRIPTS
 from sup_mem.status import collect_checks
 
 
@@ -22,10 +22,12 @@ def _wired_claude_dir(tmp_path: Path) -> tuple[Path, Path, Path]:
     binary.parent.mkdir()
     binary.write_text("#!/bin/sh\n")
     hooks = {
-        event: [{"hooks": [{"type": "command", "command": f"{binary.parent}/{script}"}]}]
-        for event, script in HOOK_EVENTS.items()
+        CLAUDE_EVENTS[role]: [
+            {"hooks": [{"type": "command", "command": f"{binary.parent}/{script}"}]}
+        ]
+        for role, script in SCRIPTS.items()
     }
-    for script in HOOK_EVENTS.values():
+    for script in SCRIPTS.values():
         (binary.parent / script).write_text("#!/bin/sh\n")
     (claude_dir / "settings.json").write_text(json.dumps({"hooks": hooks}))
     claude_json = claude_dir / ".claude.json"

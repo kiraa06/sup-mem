@@ -29,7 +29,10 @@ def test_init_remember_then_hook_retrieves(
     # keeps the test hermetic — never shells out to the real `claude` binary).
     claude_json = claude_dir / ".claude.json"
     assert (
-        commands.cmd_init(cfg, claude_dir=claude_dir, claude_json=claude_json, use_cli=False) == 0
+        commands.cmd_init(
+            cfg, clients=["claude"], claude_dir=claude_dir, claude_json=claude_json, use_cli=False
+        )
+        == 0
     )
     assert (data_dir / "memory.db").exists()
     capsys.readouterr()  # flush init's console output

@@ -37,7 +37,8 @@ def main() -> int:
         if not config.ledger.enabled:
             return 0
 
-        from sup_mem.ledger import Ledger, parse_transcript
+        from sup_mem.clients import active_client_name, get_client
+        from sup_mem.ledger import Ledger
 
         with Ledger(config.ledger_db_path) as ledger:
             ledger.ingest_log(session_id, config.retrieval_log_path)
@@ -55,7 +56,7 @@ def main() -> int:
                 finally:
                     backend.close()
 
-            turns = parse_transcript(Path(transcript_path))
+            turns = get_client(active_client_name()).parse_transcript(Path(transcript_path))
             if turns:
                 ledger.attribute(session_id, turns, texts, config)
     return 0
