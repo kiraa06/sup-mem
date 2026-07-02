@@ -34,7 +34,8 @@ RECALL_DESCRIPTION = (
     "automatically each turn, so call this ONLY when: the user references prior work you lack "
     "context for (e.g. 'the fix we did', 'that ticket', possessives about past projects) AND "
     "the context already present this turn does not cover it — optionally guided by a topic "
-    "from the session manifest. Pass a focused query."
+    "from the session manifest. Pass a focused query. For incident RCA, pass as_of "
+    "(YYYY-MM-DD or ISO timestamp) to ask what the store believed AT THAT TIME instead of now."
 )
 
 
@@ -55,21 +56,44 @@ class MemoryTools:
         mem_id = self._backend.store(text, metadata)
         return f"Stored durable memory (id {mem_id})."
 
-    def recall(self, query: str, k: int | None = None) -> str:
+    def recall(self, query: str, k: int | None = None, as_of: str | None = None) -> str:
         limit = k if (k and k > 0) else self._config.retrieval.k
-        hits = self._backend.search(query, k=limit, threshold=self._config.retrieval.threshold)
-        try:
-            from sup_mem.ranking import adjust
+        instant: str | None = None
+        if as_of:
+            from sup_mem.commands import _parse_as_of
 
-            hits = adjust(hits, self._config)  # outcome boost + quarantine (fail-open, L2)
-        except Exception:
-            pass
+            try:
+                instant = _parse_as_of(as_of)
+            except SystemExit as exc:
+                return str(exc)
+        try:
+            hits = self._backend.search(
+                query, k=limit, threshold=self._config.retrieval.threshold, as_of=instant
+            )
+        except ValueError as exc:  # backend without version history + as_of (T6)
+            return str(exc)
+        if instant is None:
+            try:
+                from sup_mem.ranking import adjust
+
+                hits = adjust(hits, self._config)  # outcome boost + quarantine (fail-open, L2)
+            except Exception:
+                pass
         if not hits:
-            return "No stored memories matched that query."
-        lines = ["Relevant long-term memories:"]
-        lines.extend(
-            f"{i}. {hit.text}  (relevance {hit.score:.2f})" for i, hit in enumerate(hits, 1)
+            when = f" as of {instant[:19]}" if instant else ""
+            return f"No stored memories matched that query{when}."
+        header = (
+            f"Memories as recorded at {instant[:19]} (beliefs THEN, possibly superseded since):"
+            if instant
+            else "Relevant long-term memories:"
         )
+        lines = [header]
+        for i, hit in enumerate(hits, 1):
+            stamp = ""
+            if instant:
+                superseded = hit.metadata.get("_superseded_at")
+                stamp = " [superseded since]" if superseded else " [still current]"
+            lines.append(f"{i}. {hit.text}  (relevance {hit.score:.2f}){stamp}")
         return "\n".join(lines)
 
     def close(self) -> None:
@@ -88,8 +112,8 @@ def build_server(config: Config | None = None) -> FastMCP:
         return tools.remember(text, tags=tags, source=source)
 
     @server.tool(name="recall", description=RECALL_DESCRIPTION)
-    def recall(query: str, k: int | None = None) -> str:
-        return tools.recall(query, k=k)
+    def recall(query: str, k: int | None = None, as_of: str | None = None) -> str:
+        return tools.recall(query, k=k, as_of=as_of)
 
     return server
 

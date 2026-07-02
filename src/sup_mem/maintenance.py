@@ -204,6 +204,26 @@ def vacuum_stores(config: Config) -> StepResult:
     return _result("vacuum", "ok", ", ".join(compacted))
 
 
+def check_provenance(config: Config) -> StepResult:
+    """Nightly chain verification (PHASE8 T5): tampering surfaces within a day."""
+    from sup_mem.backends import get_backend
+
+    backend = get_backend(config)
+    try:
+        check = getattr(backend, "verify_provenance", None)
+        if not callable(check):
+            return _result("provenance", "skipped", "not supported on this backend")
+        report = check()
+    finally:
+        backend.close()
+    if report["ok"]:
+        detail = f"{report['events']} chain events intact"
+        if report["reason"]:
+            detail = report["reason"]
+        return _result("provenance", "ok", detail)
+    return _result("provenance", "failed", report["reason"])
+
+
 def check_health(config: Config) -> StepResult:
     from sup_mem.backends import get_backend
     from sup_mem.embedding.base import EmbeddingError
@@ -245,6 +265,7 @@ _STEPS = [
     auto_tune,
     refresh_manifest,
     vacuum_stores,
+    check_provenance,
     check_health,
 ]
 

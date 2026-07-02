@@ -25,11 +25,16 @@ class MemoryBackend(ABC):
         backend can manage it (``source`` is read from ``metadata['source']``)."""
 
     @abstractmethod
-    def search(self, query: str, k: int, threshold: float) -> list[Hit]:
+    def search(self, query: str, k: int, threshold: float, as_of: str | None = None) -> list[Hit]:
         """Return up to ``k`` hits with ``score >= threshold``, best first.
 
         ``score`` MUST be normalized to 0..1 so ``threshold`` is portable across backends
         (§6.1): BM25 backends squash their rank; cosine backends map naturally.
+
+        ``as_of`` (ISO timestamp) asks for transaction-time-of-record results — "what was
+        live in the store at that instant" (PHASE8 T2). Backends without version history
+        MUST raise ``ValueError`` for a non-None ``as_of`` rather than silently returning
+        current results (T6).
         """
 
     @abstractmethod

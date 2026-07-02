@@ -64,9 +64,17 @@ All of it is advisory, fail-open, and off the hot path — the per-prompt cost i
 SQLite lookup. Spec: [docs/PHASE6-LOOP.md](docs/PHASE6-LOOP.md).
 
 **Install-and-forget:** `sup-mem service install` schedules daily housekeeping (log rotation,
-store backups with retention, native-memory sweep, *lossless-only* auto-tune, health check
-with a desktop notification on failure) — launchd on macOS, a systemd user timer on Linux.
-`sup-mem status` shows the whole wiring at a glance.
+store backups with retention, native-memory sweep, *lossless-only* auto-tune, provenance
+verification, health check with a desktop notification on failure) — launchd on macOS, a
+systemd user timer on Linux. `sup-mem status` shows the whole wiring at a glance.
+
+**Time travel + tamper evidence:** the store is append-only and versioned — a changed fact
+*supersedes* its predecessor instead of overwriting it, so
+`sup-mem recall --as-of 2026-06-01 "pod restart cause" --diff-now` answers *"what did we
+believe then, and how does it differ from now?"* — built for incident RCA. Every write also
+joins an HMAC hash chain (`~/.sup-mem/key`); `sup-mem verify` proves nothing edited your
+memories behind sup-mem's back (tamper-*evident*, not tamper-proof — an attacker holding the
+key can re-chain; see [docs/PHASE8-TEMPORAL.md](docs/PHASE8-TEMPORAL.md)).
 
 ---
 
@@ -169,6 +177,8 @@ Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · 
 | `sup-mem migrate-native [--dry-run]` | Copy Claude Code's built-in file memories (`~/.claude/projects/*/memory`) into the store. Copy-only, idempotent — re-run anytime to pick up stragglers. |
 | `sup-mem tune [--apply]` | Counterfactual threshold replay against recorded outcomes; recommends (and optionally applies) a better threshold. |
 | `sup-mem roi` | Token P&L per memory: injections, tokens, referenced/ignored/contradicted, verdicts. |
+| `sup-mem recall "q" [--as-of WHEN] [--diff-now]` | Search from the CLI; `--as-of` returns what the store believed at that instant (bitemporal, sqlite backend). |
+| `sup-mem verify` | Verify the tamper-evident provenance chain + row hashes; non-zero on any break. |
 | `sup-mem status` | One-glance wiring check: hooks, MCP server, store, ledger activity, backups, service — with a fix command per red line. |
 | `sup-mem maintain` | Housekeeping: rotate the retrieval log (ledger cursors rebased), back up + vacuum the stores, sweep native memories, lossless auto-tune, health check. |
 | `sup-mem service install` | Schedule `maintain` daily — macOS LaunchAgent or Linux systemd user timer, auto-detected (uninstall/status too). No scheduler available: prints the crontab line. |

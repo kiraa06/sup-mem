@@ -295,6 +295,124 @@ def cmd_roi(config: Config) -> int:
     return 0
 
 
+def _parse_as_of(raw: str) -> str:
+    """Normalize --as-of input to a comparable ISO instant.
+
+    A bare date means "end of that day, UTC" — `--as-of 2026-06-01` asks what we believed
+    ON June 1, so the whole day counts (PHASE8 T2).
+    """
+    from datetime import UTC, datetime, time
+
+    value = raw.strip()
+    try:
+        if len(value) == 10:  # YYYY-MM-DD
+            day = datetime.strptime(value, "%Y-%m-%d").date()
+            return datetime.combine(day, time.max, tzinfo=UTC).isoformat()
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.isoformat()
+    except ValueError as exc:
+        raise SystemExit(f"invalid --as-of {raw!r}: use YYYY-MM-DD or an ISO timestamp") from exc
+
+
+def cmd_recall(
+    config: Config,
+    query: str,
+    *,
+    k: int | None = None,
+    as_of: str | None = None,
+    diff_now: bool = False,
+) -> int:
+    """Search the store from the CLI; with --as-of, ask what we believed at that instant."""
+    from rich.console import Console
+
+    from sup_mem.backends import get_backend
+
+    console = Console()
+    instant = _parse_as_of(as_of) if as_of else None
+    limit = k if (k and k > 0) else config.retrieval.k
+
+    backend = get_backend(config)
+    try:
+        try:
+            hits = backend.search(query, k=limit, threshold=0.0, as_of=instant)
+        except ValueError as exc:  # e.g. qdrant + --as-of (T6)
+            console.print(f"[red]✗[/] {exc}")
+            return 1
+        current_versions = getattr(backend, "current_versions", None)  # sqlite backend only
+        currents: dict[str, dict[str, str]] = (
+            current_versions([str(h.metadata.get("_lineage", "")) for h in hits])
+            if diff_now and hits and callable(current_versions)
+            else {}
+        )
+    finally:
+        backend.close()
+
+    if not hits:
+        console.print(
+            f"no memories matched{f' as of {instant[:19]}' if instant else ''} — "
+            "try a broader query"
+        )
+        return 0
+
+    header = f"as of {instant[:19]} — what the store believed then" if instant else "live memories"
+    console.print(f"[bold]{header}[/] ({len(hits)} hit{'s' if len(hits) != 1 else ''})\n")
+    for i, hit in enumerate(hits, 1):
+        recorded = str(hit.metadata.get("_recorded_at", ""))[:19]
+        superseded = hit.metadata.get("_superseded_at")
+        stamp = f"recorded {recorded}"
+        if superseded:
+            stamp += f", [yellow]superseded {str(superseded)[:19]}[/]"
+        console.print(f"[bold]{i}.[/] ({hit.score:.2f}, {stamp})")
+        console.print(f"   {hit.text}\n")
+        if diff_now:
+            lineage = str(hit.metadata.get("_lineage", ""))
+            current = currents.get(lineage)
+            if current is None:
+                console.print("   [red]now: retired — no live version of this fact line[/]\n")
+            elif current["id"] == hit.id:
+                console.print("   [green]now: unchanged — still the live belief[/]\n")
+            else:
+                console.print(
+                    f"   [yellow]now: changed[/] (recorded {current['recorded_at'][:19]}):"
+                )
+                console.print(f"   {current['text']}\n")
+    return 0
+
+
+def cmd_verify(config: Config, *, quiet: bool = False) -> int:
+    """Verify the provenance chain + row hashes (PHASE8 T5). Non-zero on any break."""
+    from rich.console import Console
+
+    from sup_mem.backends import get_backend
+
+    console = Console()
+    backend = get_backend(config)
+    try:
+        check = getattr(backend, "verify_provenance", None)
+        if not callable(check):
+            console.print("[yellow]![/] provenance is not supported on this backend")
+            return 0
+        report = check()
+    finally:
+        backend.close()
+
+    if report["ok"]:
+        if not quiet:
+            console.print(
+                f"[green]✓[/] provenance intact — {report['events']} chain events verified"
+                + (f" ({report['reason']})" if report["reason"] else "")
+            )
+        return 0
+    console.print(f"[red]✗ provenance verification FAILED:[/] {report['reason']}")
+    console.print(
+        "  The store changed outside sup-mem's write path. Compare against a backup in "
+        f"{config.backups_dir} to recover."
+    )
+    return 1
+
+
 def cmd_maintain(config: Config) -> int:
     """Run all housekeeping steps (Phase 7); exit non-zero if any step failed."""
     from rich.console import Console

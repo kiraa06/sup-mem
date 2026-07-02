@@ -142,6 +142,13 @@ class LedgerConfig:
 
 
 @dataclass
+class ProvenanceConfig:
+    """Tamper-evident write chain (docs/PHASE8-TEMPORAL.md T5). HMAC key at ~/.sup-mem/key."""
+
+    enabled: bool = True
+
+
+@dataclass
 class MaintenanceConfig:
     """Housekeeping run by `sup-mem maintain` (scheduled via `sup-mem service install`)."""
 
@@ -170,6 +177,7 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     ledger: LedgerConfig = field(default_factory=LedgerConfig)
     maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
+    provenance: ProvenanceConfig = field(default_factory=ProvenanceConfig)
 
     # --- Derived paths (never serialized) -------------------------------------------------
     @property
@@ -210,6 +218,11 @@ class Config:
     def maintain_stamp_path(self) -> Path:
         """Timestamp of the last successful `maintain` run (surfaced by `status`)."""
         return self.data_dir / "maintain.last"
+
+    @property
+    def provenance_key_path(self) -> Path:
+        """HMAC key for the provenance chain (T5). Losing it makes old chains unverifiable."""
+        return self.data_dir / "key"
 
 
 # --------------------------------------------------------------------------------------------
@@ -412,4 +425,9 @@ tune_min_attributed = {c.maintenance.tune_min_attributed}
 notify = {_b(c.maintenance.notify)}
 hour = {c.maintenance.hour}                # launchd schedule (daily)
 minute = {c.maintenance.minute}
+
+[provenance]
+# Tamper-evident write chain (docs/PHASE8-TEMPORAL.md): every store/supersede/revive joins an
+# HMAC hash chain keyed by ~/.sup-mem/key. Verify with `sup-mem verify` (also runs in maintain).
+enabled = {_b(c.provenance.enabled)}
 """

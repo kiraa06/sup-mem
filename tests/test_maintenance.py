@@ -154,7 +154,16 @@ def test_run_maintenance_is_green_and_idempotent(
         ]
     assert config.maintain_stamp_path.exists()
     names = [r.name for r in maintenance.run_maintenance(config)]
-    assert names == ["rotate", "backup", "sweep", "auto-tune", "manifest", "vacuum", "health"]
+    assert names == [
+        "rotate",
+        "backup",
+        "sweep",
+        "auto-tune",
+        "manifest",
+        "vacuum",
+        "provenance",
+        "health",
+    ]
 
 
 # --- launchd service ------------------------------------------------------------------------

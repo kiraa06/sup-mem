@@ -53,6 +53,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="List what would be migrated without storing."
     )
 
+    p_recall = sub.add_parser(
+        "recall",
+        help="Search memories from the CLI; --as-of asks what the store believed at a past "
+        "instant (bitemporal, sqlite backend).",
+    )
+    p_recall.add_argument("query", help="What to search for.")
+    p_recall.add_argument("-k", type=int, default=None, help="Max hits (default: retrieval.k).")
+    p_recall.add_argument(
+        "--as-of",
+        default=None,
+        metavar="WHEN",
+        help="YYYY-MM-DD (end of day, UTC) or an ISO timestamp.",
+    )
+    p_recall.add_argument(
+        "--diff-now",
+        action="store_true",
+        help="For each as-of hit, show the live version of the same fact line.",
+    )
+
+    sub.add_parser(
+        "verify",
+        help="Verify the tamper-evident provenance chain and memory row hashes.",
+    )
+
     p_tune = sub.add_parser(
         "tune",
         help="Counterfactually replay logged retrievals against recorded outcomes and "
@@ -108,6 +132,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return commands.cmd_setup(config, args.backend, assume_yes=args.yes)
     if args.command == "migrate-native":
         return commands.cmd_migrate_native(config, dry_run=args.dry_run)
+    if args.command == "recall":
+        return commands.cmd_recall(
+            config, args.query, k=args.k, as_of=args.as_of, diff_now=args.diff_now
+        )
+    if args.command == "verify":
+        return commands.cmd_verify(config)
     if args.command == "tune":
         return commands.cmd_tune(config, apply=args.apply)
     if args.command == "roi":

@@ -187,7 +187,13 @@ class QdrantBackend(MemoryBackend):
         return point_id
 
     # -- reads ----------------------------------------------------------------------------
-    def search(self, query: str, k: int, threshold: float) -> list[Hit]:
+    def search(self, query: str, k: int, threshold: float, as_of: str | None = None) -> list[Hit]:
+        if as_of is not None:
+            # No version history here — refusing beats silently answering with "now" (T6).
+            raise ValueError(
+                "bitemporal (--as-of) recall requires the sqlite_fts backend; "
+                "the qdrant backend stores only current versions."
+            )
         if k <= 0 or not _WORD_RE.search(query):
             return []
         if not self._client.collection_exists(self._collection):

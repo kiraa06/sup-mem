@@ -105,7 +105,9 @@ def test_fail_open_when_backend_search_raises(
         def store(self, text: str, metadata: object = None) -> str:  # pragma: no cover
             return "x"
 
-        def search(self, query: str, k: int, threshold: float) -> list[Hit]:
+        def search(
+            self, query: str, k: int, threshold: float, as_of: str | None = None
+        ) -> list[Hit]:
             raise RuntimeError("backend down")
 
         def manifest(self, max_topics: int) -> list[str]:  # pragma: no cover
