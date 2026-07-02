@@ -44,6 +44,16 @@ def _point_id(text: str, source: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, f"{source}\x00{text}"))
 
 
+def _valid_point_id(value: str) -> bool:
+    if value.isdigit():
+        return True
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
 class QdrantBackend(MemoryBackend):
     def __init__(self, config: Config) -> None:
         from qdrant_client import QdrantClient
@@ -210,9 +220,12 @@ class QdrantBackend(MemoryBackend):
         return hits
 
     def fetch(self, memory_ids: list[str]) -> dict[str, str]:
-        if not memory_ids or not self._client.collection_exists(self._collection):
+        # Qdrant point ids must be unsigned ints or UUIDs; anything else cannot exist in the
+        # collection, so it is "omitted" by definition rather than sent (the server 400s on it).
+        valid = [mid for mid in memory_ids if _valid_point_id(mid)]
+        if not valid or not self._client.collection_exists(self._collection):
             return {}
-        points = self._client.retrieve(self._collection, ids=memory_ids, with_payload=True)
+        points = self._client.retrieve(self._collection, ids=valid, with_payload=True)
         return {
             str(point.id): str((point.payload or {}).get("text", ""))
             for point in points
