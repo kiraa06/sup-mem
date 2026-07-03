@@ -241,6 +241,18 @@ Nothing operational is hard-coded — it's all in `config.toml`:
 
 Latency budgets it's built to: Tier-1 skip < 5 ms · FTS query (10k) < 10 ms · warm vector query < 50 ms · cached manifest < 5 ms.
 
+## Performance
+
+Measured, not asserted — reproduce with `uv run python bench/bench.py` (hermetic; seeds throwaway stores, never touches `~/.sup-mem`). On an Apple-silicon laptop:
+
+| Path | Result |
+|---|---|
+| Per-prompt hook (cold, fresh interpreter) | **p50 65 ms** · p90 76 · p99 113 — of which interpreter ~19 ms + imports ~38 ms + retrieval **~8 ms** |
+| FTS retrieval @ 10k memories | **p50 9.6 ms** · p99 12.2 (0.4 ms @ 100 · 2.1 ms @ 1k) |
+| Peak RSS (hook process) | **~25 MB** (no model loaded on the SQLite path) |
+
+The per-prompt cost is dominated by Python process startup, not sup-mem's work — the hot path imports no model and no heavy deps (enforced by a subprocess test), and retrieval stays sub-10 ms at 10k memories via FTS5 + BM25.
+
 ## CLI
 
 | Command | Does |
