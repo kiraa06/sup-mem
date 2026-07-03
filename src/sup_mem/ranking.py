@@ -5,7 +5,9 @@ dominates (L3) — and drops quarantined memories (repeatedly contradicted, neve
 Advisory + fail-open (L2): any ledger problem returns the hits unchanged.
 
     score' = clamp01(score + boost_weight * (referenced - contradicted) / max(injected, 3))
-    quarantined: contradicted >= quarantine_contradictions AND contradicted > referenced
+    quarantined:  contradicted >= quarantine_contradictions AND contradicted > referenced
+    chronic-ignore: injected >= chronic_ignore_min_injections AND referenced/injected <
+                    chronic_ignore_max_ref_rate  →  score -= chronic_ignore_penalty (down-rank)
 """
 
 from __future__ import annotations
@@ -45,6 +47,12 @@ def adjust(hits: list[Hit], config: Config) -> list[Hit]:
             continue  # quarantined — reversible by clearing its ledger rows (L3)
         boost = led.boost_weight * (s["referenced"] - s["contradicted"]) / max(s["injected"], 3)
         score = min(1.0, max(0.0, hit.score + boost))
+        # Chronic-ignore demotion: injected enough to judge, yet almost never referenced → it is
+        # spending context for no benefit; down-rank so it usually falls below threshold (L3).
+        if s["injected"] >= led.chronic_ignore_min_injections:
+            ref_rate = s["referenced"] / s["injected"]
+            if ref_rate < led.chronic_ignore_max_ref_rate:
+                score = max(0.0, score - led.chronic_ignore_penalty)
         adjusted.append(Hit(id=hit.id, text=hit.text, score=score, metadata=hit.metadata))
     adjusted.sort(key=lambda h: h.score, reverse=True)
     return adjusted

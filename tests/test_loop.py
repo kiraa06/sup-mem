@@ -64,6 +64,25 @@ def test_quarantined_memory_is_dropped(config: Config) -> None:
     assert [h.id for h in out] == ["fresh"]
 
 
+def test_chronic_ignore_is_demoted_below_a_fresh_hit(config: Config) -> None:
+    # "stale": injected 10x, never referenced (no contradictions, so NOT quarantined) → the
+    # chronic-ignore penalty (-0.20) down-ranks it below an untouched, lower-scored fresh hit.
+    _seed_stats(config.ledger_db_path, [("stale", 10, 0, 10, 0)])
+    out = adjust([Hit("stale", "s", 0.85), Hit("fresh", "f", 0.70)], config)
+    assert next(h for h in out if h.id == "stale").score == pytest.approx(0.65)
+    assert [h.id for h in out] == ["fresh", "stale"]  # demoted, not dropped
+
+
+def test_chronic_ignore_gate_spares_new_and_used_memories(config: Config) -> None:
+    # "new": ignored but only injected 3x (< min 8) → too little evidence → NOT penalized.
+    # "used": injected 10x with 5 references (50% >= 10%) → earns its keep → NOT penalized.
+    _seed_stats(config.ledger_db_path, [("new", 3, 0, 3, 0), ("used", 10, 5, 5, 0)])
+    out = adjust([Hit("new", "n", 0.85), Hit("used", "u", 0.85)], config)
+    scores = {h.id: h.score for h in out}
+    assert scores["new"] == pytest.approx(0.85)  # spared: below the min-injections gate
+    assert scores["used"] >= 0.85  # spared (and boosted for being referenced)
+
+
 def test_disabled_ledger_is_passthrough(make_config: Callable[..., Config]) -> None:
     cfg = make_config(ledger={"enabled": False})
     _seed_stats(cfg.ledger_db_path, [("good", 3, 3, 0, 0)])

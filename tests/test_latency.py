@@ -53,3 +53,18 @@ def test_tier1_skip_is_cheap(
     elapsed_ms = (time.perf_counter() - start) * 1000
     print(f"tier-1 skip logic {elapsed_ms:.3f} ms (budget <5 ms; backend never imported)")
     assert elapsed_ms < 25  # the Tier-1 gate is regex-only; no backend/model touched
+
+
+def test_hot_path_does_not_import_importlib_metadata() -> None:
+    # The per-prompt hook imports sup_mem.config; importlib.metadata (~30 ms) must NOT ride along
+    # — __version__ is lazy (PEP 562). Subprocess gives a clean sys.modules, like a spawned hook.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, sup_mem.config; "
+        "bad=[m for m in sys.modules if m.startswith('importlib.metadata')]; "
+        "assert not bad, bad"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

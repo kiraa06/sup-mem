@@ -70,7 +70,7 @@ class ManifestConfig:
 
     full_below: int = 300  # below this many records → verbatim topic list
     max_topics: int = 100  # hard cap on emitted topics
-    token_budget: int = 600  # approximate cap on the injected manifest
+    token_budget: int = 200  # approximate cap on the injected manifest (rest → "(+N more)")
     cache: bool = True  # cache keyed on store revision; regenerate only on change
 
 
@@ -131,6 +131,12 @@ class LedgerConfig:
     quarantine_contradictions: int = 3  # contradictions needed (and > references) to drop
     min_overlap_tokens: int = 3  # distinctive-token matches for a "referenced" verdict
     overlap_fraction: float = 0.15  # ... or this fraction of the memory's tokens, if larger
+    # Chronic-ignore demotion (L3): a memory injected many times but almost never referenced is
+    # burning context for nothing. Down-rank it — not a hard drop, so a strong match can still
+    # win — gated on enough injections so new / rarely-queried memories are never punished.
+    chronic_ignore_min_injections: int = 8
+    chronic_ignore_max_ref_rate: float = 0.10
+    chronic_ignore_penalty: float = 0.20
     # A correction in the user turn right after a referenced memory flips it to contradicted.
     # NOTE: rendered as single-quoted TOML literals — keep apostrophes out of these patterns.
     correction_patterns: list[str] = field(
