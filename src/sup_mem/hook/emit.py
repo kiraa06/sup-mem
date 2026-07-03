@@ -19,7 +19,7 @@ import sys
 def emit_context(text: str) -> None:
     if not text:
         return
-    if os.environ.get("SUP_MEM_CLIENT", "").strip().lower() == "gemini":
+    if os.environ.get("SUP_MEM_CLIENT", "").strip().lower() in ("gemini", "antigravity"):
         sys.stdout.write(json.dumps({"hookSpecificOutput": {"additionalContext": text}}) + "\n")
     else:
         sys.stdout.write(text + "\n")

@@ -311,3 +311,65 @@ def register_into_gemini(config: Config, *, gemini_home: Path | None = None) -> 
         "mcp_changed": mcp_changed,
         "mcp_command": command,
     }
+
+
+# --------------------------------------------------------------------------------------------
+# Antigravity (Google's agent IDE)  →  ~/.gemini/config/hooks.json (hooks)
+#                                       + ~/.gemini/antigravity/mcp_config.json (MCP)
+# --------------------------------------------------------------------------------------------
+# Antigravity's hooks.json schema differs from Claude/Gemini: it is keyed by an arbitrary hook
+# NAME, each mapping to {Event: [handler, ...]} (handlers listed directly under the event, no
+# matcher wrapper for the non-tool events). MCP is a CONFIRMED path (a working server already
+# lives in that file). The hooks contract (event names, the camelCase stdin, the additionalContext
+# inject field) is corroborated across sources but NOT docs-confirmed — validate live. The hook
+# scripts read both snake_case and camelCase stdin, so they tolerate Antigravity's convention.
+ANTIGRAVITY_EVENTS: dict[str, str] = {
+    "user_prompt_submit": "PreInvocation",  # before the model call — inject retrieved context
+    "stop": "Stop",  # end of the agent loop — the outcome-loop attribution pass
+}
+ANTIGRAVITY_HOOK_NAME = "sup-mem"
+
+
+def _merge_antigravity_hooks(hooks_path: Path, env_client: str = "antigravity") -> bool:
+    """Non-clobbering merge of our named hook block into Antigravity's name-keyed hooks.json."""
+    data = _load_json(hooks_path)
+    block: dict[str, Any] = {}
+    for role, event in ANTIGRAVITY_EVENTS.items():
+        handler: dict[str, Any] = {
+            "type": "command",
+            "command": _hook_command(SCRIPTS[role], env_client),
+        }
+        if role in TIMEOUTS:
+            handler["timeout"] = TIMEOUTS[role]
+        block[event] = [handler]
+    if data.get(ANTIGRAVITY_HOOK_NAME) == block:
+        return False  # already registered → idempotent
+    data[ANTIGRAVITY_HOOK_NAME] = block
+    _atomic_write_json(hooks_path, data)
+    return True
+
+
+def register_into_antigravity(
+    config: Config,
+    *,
+    hooks_path: Path | None = None,
+    mcp_config_path: Path | None = None,
+) -> dict[str, Any]:
+    """Wire our hooks + MCP server into Antigravity (hooks → ~/.gemini/config/hooks.json,
+    MCP → ~/.gemini/antigravity/mcp_config.json). Non-clobbering, each with a ``.bak``."""
+    hooks_file = hooks_path or (Path.home() / ".gemini" / "config" / "hooks.json")
+    hooks_file.parent.mkdir(parents=True, exist_ok=True)
+    hooks_changed = _merge_antigravity_hooks(hooks_file)
+    command = _mcp_command()
+    mcp_file = mcp_config_path or (Path.home() / ".gemini" / "antigravity" / "mcp_config.json")
+    mcp_file.parent.mkdir(parents=True, exist_ok=True)
+    mcp_changed = _merge_mcp_json(mcp_file, command)
+    return {
+        "client": "antigravity",
+        "config_dir": str(hooks_file.parent),
+        "settings_path": str(hooks_file),
+        "mcp_target": str(mcp_file),
+        "hooks_changed": hooks_changed,
+        "mcp_changed": mcp_changed,
+        "mcp_command": command,
+    }

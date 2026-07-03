@@ -17,7 +17,11 @@ from sup_mem import commands
 from sup_mem.clients import active_client_name, detect_installed, get_client
 from sup_mem.config import Config
 from sup_mem.hook.emit import emit_context
-from sup_mem.registration import register_into_codex, register_into_gemini
+from sup_mem.registration import (
+    register_into_antigravity,
+    register_into_codex,
+    register_into_gemini,
+)
 
 
 # --- client selection ----------------------------------------------------------------------
@@ -236,10 +240,87 @@ def test_gemini_transcript_parser_falls_back_to_jsonl(tmp_path: Path) -> None:
     assert [t.text for t in turns] == ["first", "second"]
 
 
+def test_antigravity_transcript_parser_excludes_tool_output(tmp_path: Path) -> None:
+    # Real Antigravity brain/**/transcript.jsonl steps {type, source, content}: user = USER_INPUT
+    # (USER_EXPLICIT); assistant = MODEL prose (PLANNER_RESPONSE/GENERIC). Tool-output steps
+    # (VIEW_FILE/GREP_SEARCH/…) carry tool I/O, NOT the assistant's words — must be excluded.
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps(e)
+            for e in [
+                {
+                    "type": "USER_INPUT",
+                    "source": "USER_EXPLICIT",
+                    "content": "how does deploy work",
+                },
+                {"type": "PLANNER_RESPONSE", "source": "MODEL", "content": "use blue-green"},
+                {
+                    "type": "VIEW_FILE",
+                    "source": "MODEL",
+                    "content": "SECRET file body — exclude me",
+                },
+                {"type": "GREP_SEARCH", "source": "MODEL", "content": "grep hits — exclude me"},
+                {"type": "GENERIC", "source": "MODEL", "content": "done"},
+                {"type": "CONVERSATION_HISTORY", "source": "SYSTEM", "content": ""},
+                {"type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "and the db?"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    turns = get_client("antigravity").parse_transcript(path)
+    assert [t.role for t in turns] == ["user", "assistant", "assistant", "user"]
+    assert turns[1].text == "use blue-green"
+    blob = " ".join(t.text for t in turns)
+    assert "SECRET file body" not in blob and "grep hits" not in blob  # tool I/O excluded
+
+
+def test_antigravity_registration_is_nonclobbering_and_idempotent(
+    config: Config, tmp_path: Path
+) -> None:
+    # hooks.json is name-keyed ({name:{Event:[handler]}}); MCP is a standard mcpServers file.
+    hooks = tmp_path / "config" / "hooks.json"
+    mcp = tmp_path / "antigravity" / "mcp_config.json"
+    hooks.parent.mkdir(parents=True)
+    mcp.parent.mkdir(parents=True)
+    hooks.write_text(
+        json.dumps({"user-linter": {"PreToolUse": [{"matcher": "x", "hooks": []}]}}),
+        encoding="utf-8",
+    )
+    mcp.write_text(
+        json.dumps({"mcpServers": {"codebase-memory-mcp": {"command": "cbm"}}}), encoding="utf-8"
+    )
+
+    report = register_into_antigravity(config, hooks_path=hooks, mcp_config_path=mcp)
+    assert report["hooks_changed"] and report["mcp_changed"]
+
+    hj = json.loads(hooks.read_text())
+    assert "user-linter" in hj  # pre-existing hook preserved
+    assert set(hj["sup-mem"]) == {"PreInvocation", "Stop"}
+    cmd = hj["sup-mem"]["PreInvocation"][0]["command"]
+    assert "SUP_MEM_CLIENT=antigravity" in cmd and "sup-mem-hook-userprompt" in cmd
+
+    mj = json.loads(mcp.read_text())
+    assert "codebase-memory-mcp" in mj["mcpServers"]  # pre-existing MCP server preserved
+    assert mj["mcpServers"]["sup-mem"]["args"] == ["serve"]
+
+    again = register_into_antigravity(config, hooks_path=hooks, mcp_config_path=mcp)
+    assert not again["hooks_changed"] and not again["mcp_changed"]  # idempotent
+
+
+def test_emit_context_antigravity_uses_json_envelope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SUP_MEM_CLIENT", "antigravity")
+    emit_context("hello")
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"] == "hello"
+
+
 def test_parsers_fail_open_on_missing_file(tmp_path: Path) -> None:
     missing = tmp_path / "nope.jsonl"
     assert get_client("codex").parse_transcript(missing) == []
     assert get_client("gemini").parse_transcript(missing) == []
+    assert get_client("antigravity").parse_transcript(missing) == []
 
 
 # --- init dispatch (single non-default client, hermetic) -----------------------------------
@@ -253,6 +334,17 @@ def test_init_client_codex_wires_only_codex(
     assert not (tmp_path / "claude").exists()  # Claude was not selected
 
 
+def test_init_client_antigravity_wires_hooks_and_mcp(config: Config, tmp_path: Path) -> None:
+    hooks = tmp_path / "ag-config" / "hooks.json"
+    mcp = tmp_path / "ag" / "mcp_config.json"
+    rc = commands.cmd_init(
+        config, clients=["antigravity"], antigravity_hooks=hooks, antigravity_mcp=mcp
+    )
+    assert rc == 0
+    assert hooks.exists() and mcp.exists()
+    assert "sup-mem" in json.loads(hooks.read_text())
+
+
 def test_detect_installed_returns_known_names_only() -> None:
     # Whatever the host has, detection must only ever report names we can actually wire.
-    assert set(detect_installed()) <= {"claude", "codex", "gemini"}
+    assert set(detect_installed()) <= {"claude", "codex", "gemini", "antigravity"}

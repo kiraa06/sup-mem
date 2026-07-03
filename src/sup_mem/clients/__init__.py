@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 
+from sup_mem.clients.antigravity import AntigravityClient
 from sup_mem.clients.base import ClientAdapter
 from sup_mem.clients.claude import ClaudeClient
 from sup_mem.clients.codex import CodexClient
@@ -20,6 +21,7 @@ CLIENTS: dict[str, ClientAdapter] = {
     "claude": ClaudeClient(),
     "codex": CodexClient(),
     "gemini": GeminiClient(),
+    "antigravity": AntigravityClient(),
 }
 
 

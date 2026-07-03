@@ -604,6 +604,8 @@ def cmd_init(
     claude_json: Path | None = None,
     codex_home: Path | None = None,
     gemini_home: Path | None = None,
+    antigravity_hooks: Path | None = None,
+    antigravity_mcp: Path | None = None,
     use_cli: bool = True,
 ) -> int:
     """Default one-liner: create the SQLite FTS store + wire the hooks/MCP into the host(s).
@@ -637,6 +639,7 @@ def cmd_init(
         "claude": {"claude_dir": claude_dir, "claude_json": claude_json, "use_cli": use_cli},
         "codex": {"codex_home": codex_home},
         "gemini": {"gemini_home": gemini_home},
+        "antigravity": {"antigravity_hooks": antigravity_hooks, "antigravity_mcp": antigravity_mcp},
     }
 
     console.print(f"[green]✓[/] sup-mem ready (SQLite FTS) — {config.data_dir}")

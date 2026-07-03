@@ -164,8 +164,10 @@ def main() -> int:
         return 0  # inside the PreCompact extractor's child session — do nothing (PHASE10 C4)
     try:
         data = _read_stdin()
-        prompt = str(data.get("prompt", ""))
-        session_id = str(data.get("session_id", ""))
+        # Tolerate host conventions: snake_case (Claude/Codex/Gemini) + camelCase / aliases
+        # (Antigravity's PreInvocation payload).
+        prompt = str(data.get("prompt") or data.get("userPrompt") or data.get("message") or "")
+        session_id = str(data.get("session_id") or data.get("sessionId") or "")
         config = load_config()
     except Exception:
         return 0  # fail open before we even know what to do

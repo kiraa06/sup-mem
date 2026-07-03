@@ -26,8 +26,9 @@ def main() -> int:
         data = json.loads(raw) if raw.strip() else {}
         if not isinstance(data, dict):
             return 0
-        session_id = str(data.get("session_id", ""))
-        transcript_path = str(data.get("transcript_path", ""))
+        # Tolerate both snake_case (Claude/Codex/Gemini) and camelCase (Antigravity) stdin.
+        session_id = str(data.get("session_id") or data.get("sessionId") or "")
+        transcript_path = str(data.get("transcript_path") or data.get("transcriptPath") or "")
         if not session_id or not transcript_path:
             return 0
 

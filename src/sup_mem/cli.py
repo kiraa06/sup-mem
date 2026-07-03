@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_init.add_argument(
         "--client",
-        choices=["claude", "codex", "gemini", "all"],
+        choices=["claude", "codex", "gemini", "antigravity", "all"],
         help="Which host to wire (default: auto-detect installed: Claude Code, Codex, Gemini).",
     )
 
@@ -144,7 +144,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "init":
         sel = args.client
-        clients = None if not sel else (["claude", "codex", "gemini"] if sel == "all" else [sel])
+        clients = (
+            None
+            if not sel
+            else (["claude", "codex", "gemini", "antigravity"] if sel == "all" else [sel])
+        )
         return commands.cmd_init(config, clients=clients)
     if args.command == "setup":
         return commands.cmd_setup(config, args.backend, assume_yes=args.yes)
