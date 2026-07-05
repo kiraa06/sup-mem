@@ -87,10 +87,34 @@ def rotate_log(config: Config) -> StepResult:
 # --------------------------------------------------------------------------------------------
 # backup — VACUUM INTO timestamped copies, with retention
 # --------------------------------------------------------------------------------------------
+def _store_fingerprint(config: Config) -> str:
+    """Cheap 'did the memory store change' signal — the provenance chain length (append-only,
+    grows on every store/supersede/restate). Empty string means unknown (never skip)."""
+    if not config.db_path.exists():
+        return ""
+    conn = sqlite3.connect(str(config.db_path))
+    try:
+        return str(conn.execute("SELECT COUNT(*) FROM provenance").fetchone()[0])
+    except sqlite3.Error:
+        return ""
+    finally:
+        conn.close()
+
+
 def backup_stores(config: Config) -> StepResult:
     targets = [p for p in (config.db_path, config.ledger_db_path) if p.exists()]
     if not targets:
         return _result("backup", "skipped", "no local databases to back up")
+    config.backups_dir.mkdir(parents=True, exist_ok=True)
+
+    # Skip when the memory store is unchanged since the last backup — otherwise daily maintain
+    # piles up byte-identical copies (backup_keep × store_size dominates the footprint at scale).
+    fingerprint = _store_fingerprint(config)
+    marker = config.backups_dir / ".fingerprint"
+    if fingerprint and marker.exists():
+        with contextlib.suppress(OSError):
+            if marker.read_text(encoding="utf-8").strip() == fingerprint:
+                return _result("backup", "skipped", "store unchanged since last backup")
 
     # Microseconds keep stamps unique even for back-to-back runs; still lexically sortable.
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S.%f")
@@ -106,13 +130,40 @@ def backup_stores(config: Config) -> StepResult:
             conn.close()
         copied.append(db.name)
 
-    # Retention: keep the newest N backup directories.
+    # Retention: keep the newest N backup dirs (the .fingerprint marker is a file, so it's skipped).
     backups = sorted((d for d in config.backups_dir.iterdir() if d.is_dir()), reverse=True)
     pruned = 0
     for old in backups[config.maintenance.backup_keep :]:
         shutil.rmtree(old, ignore_errors=True)
         pruned += 1
+    if fingerprint:
+        with contextlib.suppress(OSError):
+            marker.write_text(fingerprint + "\n", encoding="utf-8")
     return _result("backup", "ok", f"{', '.join(copied)} → {dest_dir.name} (pruned {pruned})")
+
+
+def prune_candidates(config: Config) -> StepResult:
+    """Bound the ledger ``candidates`` table — it only feeds `tune`'s counterfactual replay,
+    which wants a recent window, not all history. Keeps the newest ``candidates_keep`` rows;
+    ``stats`` (roi/ranking's cumulative counts) is never touched."""
+    if not config.ledger_db_path.exists():
+        return _result("prune-candidates", "skipped", "no ledger yet")
+    keep = config.maintenance.candidates_keep
+    conn = sqlite3.connect(str(config.ledger_db_path))
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
+        if total <= keep:
+            return _result("prune-candidates", "ok", f"{total} rows (within keep {keep})")
+        cutoff = conn.execute(
+            "SELECT rowid FROM candidates ORDER BY rowid DESC LIMIT 1 OFFSET ?", (keep - 1,)
+        ).fetchone()[0]
+        with conn:
+            conn.execute("DELETE FROM candidates WHERE rowid < ?", (cutoff,))
+        return _result("prune-candidates", "ok", f"pruned {total - keep}, kept newest {keep}")
+    except sqlite3.Error as exc:
+        return _result("prune-candidates", "failed", str(exc))
+    finally:
+        conn.close()
 
 
 # --------------------------------------------------------------------------------------------
@@ -282,6 +333,7 @@ _STEPS = [
     auto_tune,
     run_archival_step,
     refresh_manifest,
+    prune_candidates,
     vacuum_stores,
     check_provenance,
     check_health,

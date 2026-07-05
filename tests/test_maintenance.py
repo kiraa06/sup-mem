@@ -97,11 +97,63 @@ def test_backup_snapshots_and_prunes(config: Config) -> None:
     assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 1
     conn.close()
 
-    for i in range(9):  # fabricate older backups → retention keeps newest backup_keep (7)
+    for i in range(9):  # fabricate older backups → retention keeps newest backup_keep
         (config.backups_dir / f"2020010{i}-000000").mkdir()
+    backend = get_backend(config)  # change the store so the next backup isn't skipped-unchanged
+    backend.store("another memory", {"source": "s2"})
+    backend.close()
     result = maintenance.backup_stores(config)
     assert result.status == "ok"
-    assert len(list(config.backups_dir.iterdir())) == config.maintenance.backup_keep
+    kept = [d for d in config.backups_dir.iterdir() if d.is_dir()]  # .fingerprint is a file
+    assert len(kept) == config.maintenance.backup_keep
+
+
+def test_backup_skips_when_store_unchanged(config: Config) -> None:
+    backend = get_backend(config)
+    backend.store("stable fact", {"source": "s"})
+    backend.close()
+    assert maintenance.backup_stores(config).status == "ok"
+    n1 = len([d for d in config.backups_dir.iterdir() if d.is_dir()])
+
+    second = maintenance.backup_stores(config)  # nothing changed → no new snapshot
+    assert second.status == "skipped" and "unchanged" in second.detail
+    assert len([d for d in config.backups_dir.iterdir() if d.is_dir()]) == n1
+
+    backend = get_backend(config)  # a new memory bumps the fingerprint → backup runs again
+    backend.store("a fresh fact", {"source": "s2"})
+    backend.close()
+    assert maintenance.backup_stores(config).status == "ok"
+    assert len([d for d in config.backups_dir.iterdir() if d.is_dir()]) == n1 + 1
+
+
+def test_prune_candidates_keeps_newest_and_spares_stats(
+    make_config: Callable[..., Config],
+) -> None:
+    cfg = make_config(maintenance={"candidates_keep": 5})
+    Ledger(cfg.ledger_db_path).close()
+    conn = sqlite3.connect(str(cfg.ledger_db_path))
+    with conn:
+        for i in range(20):
+            conn.execute(
+                "INSERT INTO candidates "
+                "(session_id, line_no, memory_id, score, injected, outcome, tokens) "
+                "VALUES ('s', ?, ?, 0.5, 1, '', 10)",
+                (i, f"m{i}"),
+            )
+        conn.execute(  # a cumulative stat that must survive pruning untouched
+            "INSERT INTO stats (memory_id, injected, referenced, ignored, contradicted) "
+            "VALUES ('m0', 3, 1, 2, 0)"
+        )
+    conn.close()
+
+    assert maintenance.prune_candidates(cfg).status == "ok"
+
+    conn = sqlite3.connect(str(cfg.ledger_db_path))
+    kept = [r[0] for r in conn.execute("SELECT memory_id FROM candidates ORDER BY line_no")]
+    stats = conn.execute("SELECT COUNT(*) FROM stats").fetchone()[0]
+    conn.close()
+    assert kept == [f"m{i}" for i in range(15, 20)]  # newest 5 kept, oldest 15 pruned
+    assert stats == 1  # stats (roi/ranking source) untouched
 
 
 # --- auto-tune ------------------------------------------------------------------------------
@@ -161,6 +213,7 @@ def test_run_maintenance_is_green_and_idempotent(
         "auto-tune",
         "archival",
         "manifest",
+        "prune-candidates",
         "vacuum",
         "provenance",
         "health",

@@ -190,7 +190,10 @@ class MaintenanceConfig:
     """Housekeeping run by `sup-mem maintain` (scheduled via `sup-mem service install`)."""
 
     log_keep_days: int = 14  # retrieval.jsonl rotation window (ledger cursors are rebased)
-    backup_keep: int = 7  # timestamped store backups retained
+    backup_keep: int = (
+        5  # distinct-state store backups retained (unchanged stores aren't re-backed)
+    )
+    candidates_keep: int = 20000  # ledger `candidates` rows kept (bounds tune-replay history)
     auto_tune: bool = True  # apply tune recommendation only when lossless
     tune_min_attributed: int = 20  # minimum attributed injections before auto-tune acts
     notify: bool = True  # macOS notification when maintain finds problems
@@ -464,7 +467,8 @@ correction_patterns = {_arr(c.ledger.correction_patterns)}
 [maintenance]
 # Housekeeping run by `sup-mem maintain`; schedule it with `sup-mem service install`.
 log_keep_days = {c.maintenance.log_keep_days}
-backup_keep = {c.maintenance.backup_keep}
+backup_keep = {c.maintenance.backup_keep}       # only distinct store states are backed up
+candidates_keep = {c.maintenance.candidates_keep}  # cap the ledger candidates table (tune replay)
 auto_tune = {_b(c.maintenance.auto_tune)}       # apply tune recommendation only when lossless
 tune_min_attributed = {c.maintenance.tune_min_attributed}
 notify = {_b(c.maintenance.notify)}

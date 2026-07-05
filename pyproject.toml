@@ -1,6 +1,6 @@
 [project]
 name = "sup-mem"
-version = "0.8.1"
+version = "0.8.2"
 description = "Self-hosted memory layer for Claude Code, Codex & Gemini CLI — with an outcome loop that measures whether its memories helped."
 readme = "README.md"
 requires-python = ">=3.11"
