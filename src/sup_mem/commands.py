@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -226,8 +226,22 @@ def cmd_tune(config: Config, *, apply: bool = False) -> int:
     return 0
 
 
-def cmd_roi(config: Config) -> int:
-    """Token P&L per memory: what each memory costs in context vs. what it contributes."""
+def _roi_verdict(s: Any, led: Any) -> str:
+    if s["contradicted"] >= led.quarantine_contradictions and s["contradicted"] > s["referenced"]:
+        return "[red]quarantined[/]"
+    if s["referenced"] > 0:
+        return "[green]valuable[/]"
+    if s["injected"] >= 3:
+        return "[yellow]wasteful[/]"
+    return "watching"
+
+
+def cmd_roi(config: Config, *, top: int = 12, show_all: bool = False) -> int:
+    """Token P&L per memory: what each memory costs in context vs. what it contributes.
+
+    Shows the top ``top`` spenders by default (the table is otherwise as long as the store);
+    the Totals line always covers every memory. ``show_all`` prints the full table.
+    """
     from rich.console import Console
     from rich.table import Table
 
@@ -241,14 +255,24 @@ def cmd_roi(config: Config) -> int:
         console.print("[yellow]No outcome data yet[/] — the ledger fills as you use Claude Code.")
         return 0
 
+    # Totals span EVERY memory (cheap; no text needed) so the summary is always complete.
+    totals = {"injected": 0, "tokens": 0, "referenced": 0, "ignored": 0, "contradicted": 0}
+    for s in stats:
+        for key in totals:
+            totals[key] += int(s[key])
+
+    stats.sort(key=lambda s: int(s["tokens"]), reverse=True)  # highest context spend first
+    shown = stats if show_all else stats[: max(top, 1)]
+
     backend = get_backend(config)
     try:
-        texts = backend.fetch([s["memory_id"] for s in stats])
+        texts = backend.fetch([s["memory_id"] for s in shown])  # only the rows we render
     finally:
         backend.close()
 
     led = config.ledger
-    table = Table(title="sup-mem roi — token P&L per memory (highest spend first)")
+    title = "sup-mem roi — token P&L per memory (highest spend first)"
+    table = Table(title=title if show_all else f"{title} — top {len(shown)} of {len(stats)}")
     for col, justify in (
         ("memory", "left"),
         ("inj", "right"),
@@ -260,21 +284,7 @@ def cmd_roi(config: Config) -> int:
     ):
         table.add_column(col, justify=justify)  # type: ignore[arg-type]
 
-    totals = {"injected": 0, "tokens": 0, "referenced": 0, "ignored": 0, "contradicted": 0}
-    for s in stats:
-        for key in totals:
-            totals[key] += int(s[key])
-        if (
-            s["contradicted"] >= led.quarantine_contradictions
-            and s["contradicted"] > s["referenced"]
-        ):
-            verdict = "[red]quarantined[/]"
-        elif s["referenced"] > 0:
-            verdict = "[green]valuable[/]"
-        elif s["injected"] >= 3:
-            verdict = "[yellow]wasteful[/]"
-        else:
-            verdict = "watching"
+    for s in shown:
         snippet = texts.get(s["memory_id"], s["memory_id"])[:57].replace("\n", " ")
         table.add_row(
             snippet,
@@ -283,13 +293,17 @@ def cmd_roi(config: Config) -> int:
             str(s["referenced"]),
             str(s["ignored"]),
             str(s["contradicted"]),
-            verdict,
+            _roi_verdict(s, led),
         )
     console.print(table)
+
+    hidden = len(stats) - len(shown)
+    if hidden > 0:
+        console.print(f"[dim]… {hidden} more — `sup-mem roi --all` for the full table.[/]")
     ref_rate = totals["referenced"] / max(totals["injected"], 1)
     console.print(
-        f"Totals: {totals['injected']} injections, ~{totals['tokens']} tokens, "
-        f"{totals['referenced']} referenced ({ref_rate:.0%}), "
+        f"Totals ({len(stats)} memories): {totals['injected']} injections, "
+        f"~{totals['tokens']} tokens, {totals['referenced']} referenced ({ref_rate:.0%}), "
         f"{totals['ignored']} ignored, {totals['contradicted']} contradicted."
     )
     return 0
