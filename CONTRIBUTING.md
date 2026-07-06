@@ -8,6 +8,18 @@ uv sync                    # base (SQLite) dev env — this is all most changes 
 uv sync --extra qdrant     # vector path (tests skip gracefully without a live Qdrant)
 ```
 
+## Branching & releases
+
+`main` is protected — **no direct pushes**; everything lands via PR with green CI.
+
+- **Features** → `feat/<slug>` → PR into `main`.
+- **Bugfixes** → `fix/<slug>` → PR into `main` (kept separate from features).
+- Everything else → `docs/<slug>` / `chore/<slug>`. Keep PRs focused; the prefix says the kind.
+- **Releases**: merge to `main`, then tag `vX.Y.Z` on `main` — the release workflow builds,
+  cuts the GitHub Release, and publishes to PyPI. Bump the Homebrew formula's url+sha256 after.
+
+Required checks before a PR can merge: `Lint + type` and `Tests (SQLite path …)` (3.11 + 3.12).
+
 ## The gate (every PR must pass it — CI enforces the same)
 
 ```bash
