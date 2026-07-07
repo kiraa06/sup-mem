@@ -154,6 +154,24 @@ def test_roi_totals_match_ledger(config: Config, capsys: pytest.CaptureFixture[s
     assert "valuable" in out and "wasteful" in out
 
 
+def test_roi_top_limits_rows_but_totals_span_all(
+    config: Config, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sup_mem.backends import get_backend
+
+    monkeypatch.setenv("COLUMNS", "200")  # keep rich from wrapping the title/totals in capture
+    backend = get_backend(config)
+    ids = [backend.store(f"memory {i} on deploy pipelines", {"source": f"s{i}"}) for i in range(6)]
+    backend.close()
+    _seed_stats(config.ledger_db_path, [(mid, 5, 1, 4, 0) for mid in ids])  # 6 memories, 30 inj
+
+    assert commands.cmd_roi(config, top=2) == 0
+    out = capsys.readouterr().out
+    assert "top 2 of 6" in out  # table truncated to the top spenders
+    assert "4 more" in out  # hidden-row hint
+    assert "6 memories" in out and "30 injections" in out  # totals still span every memory
+
+
 def test_roi_without_data_is_friendly(config: Config, capsys: pytest.CaptureFixture[str]) -> None:
     assert commands.cmd_roi(config) == 0
     assert "no outcome data" in capsys.readouterr().out.lower()

@@ -102,11 +102,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply", action="store_true", help="Write the recommended threshold into config.toml."
     )
 
-    sub.add_parser(
+    p_roi = sub.add_parser(
         "roi",
         help="Token P&L per memory: injections, tokens consumed, referenced/ignored/"
         "contradicted, verdicts.",
     )
+    p_roi.add_argument(
+        "--top", type=int, default=12, help="Rows to show (top spenders; default 12)."
+    )
+    p_roi.add_argument("--all", action="store_true", help="Show every memory, not just the top.")
 
     sub.add_parser(
         "maintain",
@@ -163,7 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "tune":
         return commands.cmd_tune(config, apply=args.apply)
     if args.command == "roi":
-        return commands.cmd_roi(config)
+        return commands.cmd_roi(config, top=args.top, show_all=args.all)
     if args.command == "maintain":
         return commands.cmd_maintain(config)
     if args.command == "status":
