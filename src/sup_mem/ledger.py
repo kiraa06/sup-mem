@@ -129,51 +129,74 @@ def attributed_count(turns: list[CandidateTurn]) -> int:
     return sum(1 for turn in turns for c in turn if c["injected"] and c["outcome"])
 
 
-def replay_thresholds(turns: list[CandidateTurn], k: int, current: float) -> list[dict[str, float]]:
-    """Replay every logged turn at a grid of thresholds against recorded outcomes.
+def _replay_one(turns: list[CandidateTurn], theta: float, k: int) -> dict[str, float]:
+    """Count outcomes for one counterfactual policy (threshold ``theta``, top-``k``).
 
     Honest by construction (L4): only injections that actually happened have outcomes;
-    candidates that were below the live threshold count as ``unknown`` when a lower
-    threshold would have injected them.
+    candidates that were never injected live count as ``unknown`` when this policy would
+    have injected them (turn lists are score-DESC, so ``[:k]`` is a true top-k).
     """
+    kept_ref = lost_ref = kept_ign = cut_ign = unknown_added = 0
+    tokens_total = 0
+    for turn in turns:
+        would = [c for c in turn if c["score"] >= theta][:k]
+        would_ids = {c["memory_id"] for c in would}
+        tokens_total += sum(c["tokens"] for c in would)
+        for cand in turn:
+            inj, outcome = bool(cand["injected"]), str(cand["outcome"])
+            in_would = cand["memory_id"] in would_ids
+            if inj and outcome in ("referenced", "contradicted"):
+                kept_ref += in_would and outcome == "referenced"
+                lost_ref += (not in_would) and outcome == "referenced"
+            elif inj and outcome == "ignored":
+                kept_ign += in_would
+                cut_ign += not in_would
+            elif not inj and in_would:
+                unknown_added += 1  # never injected live → outcome unknown (L4)
+    return {
+        "kept_ref": kept_ref,
+        "lost_ref": lost_ref,
+        "kept_ign": kept_ign,
+        "cut_ign": cut_ign,
+        "unknown": unknown_added,
+        "tok_per_turn": tokens_total / max(len(turns), 1),
+    }
+
+
+def replay_thresholds(turns: list[CandidateTurn], k: int, current: float) -> list[dict[str, float]]:
+    """Replay every logged turn at a grid of thresholds against recorded outcomes."""
     grid = sorted({round(0.05 * i, 2) for i in range(1, 20)} | {round(current, 2)})
-    rows: list[dict[str, float]] = []
-    for theta in grid:
-        kept_ref = lost_ref = kept_ign = cut_ign = unknown_added = 0
-        tokens_total = 0
-        for turn in turns:
-            would = [c for c in turn if c["score"] >= theta][:k]
-            would_ids = {c["memory_id"] for c in would}
-            tokens_total += sum(c["tokens"] for c in would)
-            for cand in turn:
-                inj, outcome = bool(cand["injected"]), str(cand["outcome"])
-                in_would = cand["memory_id"] in would_ids
-                if inj and outcome in ("referenced", "contradicted"):
-                    kept_ref += in_would and outcome == "referenced"
-                    lost_ref += (not in_would) and outcome == "referenced"
-                elif inj and outcome == "ignored":
-                    kept_ign += in_would
-                    cut_ign += not in_would
-                elif not inj and in_would:
-                    unknown_added += 1  # below the live threshold then → outcome unknown (L4)
-        rows.append(
-            {
-                "theta": theta,
-                "kept_ref": kept_ref,
-                "lost_ref": lost_ref,
-                "kept_ign": kept_ign,
-                "cut_ign": cut_ign,
-                "unknown": unknown_added,
-                "tok_per_turn": tokens_total / max(len(turns), 1),
-            }
-        )
-    return rows
+    return [{"theta": theta, **_replay_one(turns, theta, k)} for theta in grid]
 
 
 def recommend_threshold(rows: list[dict[str, float]], current: float) -> float:
     """The highest threshold that loses zero referenced injections; else the current one."""
     keepers = [r for r in rows if r["lost_ref"] == 0]
     return float(max(keepers, key=lambda r: r["theta"])["theta"]) if keepers else current
+
+
+def replay_k(
+    turns: list[CandidateTurn], threshold: float, current_k: int
+) -> list[dict[str, float]]:
+    """Replay every logged turn at k = 1..current_k+1 under the live threshold.
+
+    The mirror of :func:`replay_thresholds` on the other retrieval knob: how many of the
+    actually-referenced injections would a smaller k have kept, and at what token cost. The
+    ``current_k + 1`` row is included for honesty — it can only add ``unknown`` outcomes,
+    which is exactly why raising k is a guess while lowering it is evidence-based.
+    """
+    grid = sorted(set(range(1, current_k + 2)))
+    return [{"k": float(kk), **_replay_one(turns, threshold, kk)} for kk in grid]
+
+
+def recommend_k(rows: list[dict[str, float]], current_k: int) -> int:
+    """The lowest k (≤ current) that loses zero referenced injections; else the current one.
+
+    Only shrinking is recommended: a larger k would inject candidates whose outcomes were
+    never observed (L4) — the same asymmetry as the threshold recommendation.
+    """
+    keepers = [r for r in rows if r["lost_ref"] == 0 and r["k"] <= current_k]
+    return int(min(keepers, key=lambda r: r["k"])["k"]) if keepers else current_k
 
 
 def _find_prompt_turn(turns: list[Turn], query: str) -> int:

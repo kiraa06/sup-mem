@@ -133,6 +133,70 @@ def test_tune_without_data_is_friendly(config: Config, capsys: pytest.CaptureFix
     assert "not enough outcome data" in capsys.readouterr().out.lower()
 
 
+# --- k replay ---------------------------------------------------------------------------------
+def test_replay_k_counts_and_recommendation() -> None:
+    from sup_mem.ledger import recommend_k, replay_k
+
+    turns = [
+        [  # score-DESC, as candidate_turns() returns them
+            {"memory_id": "top", "score": 0.90, "injected": 1, "outcome": "ignored", "tokens": 30},
+            {
+                "memory_id": "snd",
+                "score": 0.85,
+                "injected": 1,
+                "outcome": "referenced",
+                "tokens": 30,
+            },
+            {"memory_id": "pool", "score": 0.50, "injected": 0, "outcome": "", "tokens": 10},
+        ]
+    ]
+    rows = replay_k(turns, 0.35, 2)
+    by_k = {int(r["k"]): r for r in rows}
+    assert set(by_k) == {1, 2, 3}  # 1..current_k+1
+    assert by_k[1]["lost_ref"] == 1  # the rank-2 referenced injection is lost at k=1
+    assert by_k[2]["lost_ref"] == 0 and by_k[2]["cut_ign"] == 0
+    assert by_k[3]["unknown"] == 1  # k above current only adds never-injected outcomes (L4)
+    assert recommend_k(rows, 2) == 2  # k=1 is lossy; k=3 is never recommended (raising = guess)
+
+    lossless = [
+        [
+            {
+                "memory_id": "top",
+                "score": 0.90,
+                "injected": 1,
+                "outcome": "referenced",
+                "tokens": 30,
+            },
+            {"memory_id": "snd", "score": 0.85, "injected": 1, "outcome": "ignored", "tokens": 30},
+        ]
+    ]
+    assert recommend_k(replay_k(lossless, 0.35, 2), 2) == 1  # every ref at rank 1 → shrink
+
+
+def test_tune_apply_writes_both_theta_and_k(
+    config: Config, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLUMNS", "200")
+    # Single injected+referenced candidate at rank 1 → θ can rise to 0.8 AND k can shrink to 1,
+    # both losslessly; --apply must land both in ONE config write.
+    _seed_candidates(
+        config.ledger_db_path,
+        [[("a", 0.80, 1, "referenced", 30), ("b", 0.40, 1, "ignored", 25)]],
+    )
+    assert commands.cmd_tune(config, apply=True) == 0
+    out = capsys.readouterr().out
+    assert "Recommended k:" in out and "★rec" in out
+
+    text = config.config_path.read_text(encoding="utf-8")
+    assert "threshold = 0.8" in text
+    assert "\nk = 1" in text  # line-anchored: must not match pool_k
+
+    from sup_mem.config import load_config
+
+    reloaded = load_config(overrides={"data_dir": str(config.data_dir)})
+    assert reloaded.retrieval.threshold == 0.8 and reloaded.retrieval.k == 1
+
+
 # --- roi (acceptance 4) ----------------------------------------------------------------------
 def test_roi_totals_match_ledger(config: Config, capsys: pytest.CaptureFixture[str]) -> None:
     from sup_mem.backends import get_backend
