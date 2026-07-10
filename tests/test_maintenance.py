@@ -185,6 +185,21 @@ def test_auto_tune_applies_lossless_threshold(make_config: Callable[..., Config]
     assert "threshold = 0.8" in cfg.config_path.read_text(encoding="utf-8")
 
 
+def test_auto_tune_applies_lossless_k_alongside_threshold(
+    make_config: Callable[..., Config],
+) -> None:
+    # Both refs sit at rank 1 of their turns → k 3→1 is lossless; θ 0.35→0.8 too. One write,
+    # both knobs; the detail names both changes.
+    cfg = make_config(maintenance={"tune_min_attributed": 1})
+    _seed_candidate(cfg.ledger_db_path, 0, "a", 0.8, "referenced")
+    _seed_candidate(cfg.ledger_db_path, 1, "b", 0.4, "ignored")
+    result = maintenance.auto_tune(cfg)
+    assert result.status == "ok" and "applied" in result.detail
+    assert "threshold" in result.detail and "k 3 → 1" in result.detail
+    text = cfg.config_path.read_text(encoding="utf-8")
+    assert "threshold = 0.8" in text and "\nk = 1" in text
+
+
 def test_auto_tune_respects_disable(make_config: Callable[..., Config]) -> None:
     cfg = make_config(maintenance={"auto_tune": False})
     assert maintenance.auto_tune(cfg).status == "skipped"

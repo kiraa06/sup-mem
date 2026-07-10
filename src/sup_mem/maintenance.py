@@ -196,7 +196,14 @@ def auto_tune(config: Config) -> StepResult:
     if not config.ledger_db_path.exists():
         return _result("auto-tune", "skipped", "no ledger yet")
 
-    from sup_mem.ledger import Ledger, attributed_count, recommend_threshold, replay_thresholds
+    from sup_mem.ledger import (
+        Ledger,
+        attributed_count,
+        recommend_k,
+        recommend_threshold,
+        replay_k,
+        replay_thresholds,
+    )
 
     with Ledger(config.ledger_db_path) as ledger:
         turns = ledger.candidate_turns()
@@ -209,18 +216,27 @@ def auto_tune(config: Config) -> StepResult:
         )
 
     current = config.retrieval.threshold
-    rows = replay_thresholds(turns, config.retrieval.k, current)
-    recommended = recommend_threshold(rows, current)
-    if recommended == round(current, 2):
-        return _result("auto-tune", "ok", f"threshold {current} already optimal")
+    current_k = config.retrieval.k
+    recommended = recommend_threshold(replay_thresholds(turns, current_k, current), current)
+    k_recommended = recommend_k(replay_k(turns, current, current_k), current_k)
+
+    changes: dict[str, object] = {}
+    notes: list[str] = []
+    if recommended != round(current, 2):
+        changes["threshold"] = recommended
+        notes.append(f"threshold {current} → {recommended}")
+    if k_recommended != current_k:
+        changes["k"] = k_recommended
+        notes.append(f"k {current_k} → {k_recommended}")
+    if not changes:
+        return _result("auto-tune", "ok", f"threshold {current}, k {current_k} already optimal")
 
     from sup_mem.config import load_config, render_default_toml
 
-    updated = load_config(
-        overrides={"data_dir": str(config.data_dir), "retrieval": {"threshold": recommended}}
-    )
+    # One combined write — both knobs land in a single render (a second write would clobber).
+    updated = load_config(overrides={"data_dir": str(config.data_dir), "retrieval": changes})
     updated.config_path.write_text(render_default_toml(updated), encoding="utf-8")
-    return _result("auto-tune", "ok", f"threshold {current} → {recommended} (lossless, applied)")
+    return _result("auto-tune", "ok", f"{'; '.join(notes)} (lossless, applied)")
 
 
 # --------------------------------------------------------------------------------------------

@@ -171,7 +171,14 @@ def cmd_tune(config: Config, *, apply: bool = False) -> int:
     from rich.console import Console
     from rich.table import Table
 
-    from sup_mem.ledger import Ledger, attributed_count, recommend_threshold, replay_thresholds
+    from sup_mem.ledger import (
+        Ledger,
+        attributed_count,
+        recommend_k,
+        recommend_threshold,
+        replay_k,
+        replay_thresholds,
+    )
 
     console = Console()
     with Ledger(config.ledger_db_path) as ledger:
@@ -211,18 +218,53 @@ def cmd_tune(config: Config, *, apply: bool = False) -> int:
         "lowering the threshold is a guess; raising it is evidence-based."
     )
 
-    if apply and recommended != current:
-        from sup_mem.config import load_config, render_default_toml
+    # The other retrieval knob, same evidence: replay k under the live threshold (L4).
+    current_k = config.retrieval.k
+    k_rows = replay_k(turns, current, current_k)
+    k_recommended = recommend_k(k_rows, current_k)
+    k_table = Table(title=f"sup-mem tune — k replay (threshold {current:.2f})")
+    for col in ("k", "ref kept", "ref lost", "ign kept", "ign cut", "unknown+", "tok/turn"):
+        k_table.add_column(col, justify="right")
+    for r in k_rows:
+        kk = int(r["k"])
+        mark = " ←now" if kk == current_k else ""
+        mark += " ★rec" if kk == k_recommended else ""
+        k_table.add_row(
+            f"{kk}{mark}",
+            str(int(r["kept_ref"])),
+            str(int(r["lost_ref"])),
+            str(int(r["kept_ign"])),
+            str(int(r["cut_ign"])),
+            str(int(r["unknown"])),
+            f"{r['tok_per_turn']:.0f}",
+        )
+    console.print(k_table)
+    console.print(
+        f"Recommended k: [bold]{k_recommended}[/] "
+        "(lowest that keeps every referenced injection — "
+        "shrinking k is evidence-based; raising it is a guess)."
+    )
 
-        updated = load_config(
-            overrides={"data_dir": str(config.data_dir), "retrieval": {"threshold": recommended}}
-        )
-        updated.config_path.write_text(render_default_toml(updated), encoding="utf-8")
-        console.print(
-            f"[green]✓[/] wrote retrieval.threshold = {recommended} → {updated.config_path}"
-        )
-    elif apply:
-        console.print("Current threshold already matches the recommendation — nothing written.")
+    if apply:
+        # One combined write — two sequential render+writes would clobber the first.
+        retrieval_changes: dict[str, object] = {}
+        if recommended != current:
+            retrieval_changes["threshold"] = recommended
+        if k_recommended != current_k:
+            retrieval_changes["k"] = k_recommended
+        if retrieval_changes:
+            from sup_mem.config import load_config, render_default_toml
+
+            updated = load_config(
+                overrides={"data_dir": str(config.data_dir), "retrieval": retrieval_changes}
+            )
+            updated.config_path.write_text(render_default_toml(updated), encoding="utf-8")
+            written = ", ".join(
+                f"retrieval.{key} = {val}" for key, val in retrieval_changes.items()
+            )
+            console.print(f"[green]✓[/] wrote {written} → {updated.config_path}")
+        else:
+            console.print("Current settings already match the recommendations — nothing written.")
     return 0
 
 
