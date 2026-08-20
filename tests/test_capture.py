@@ -187,6 +187,46 @@ def test_missing_claude_binary_is_silent(
     assert n == 0
 
 
+def test_capture_status_separates_empty_from_failure(
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every one of these costs a real model call and yields no facts; the log has to say
+    # WHICH, or a broken extractor is indistinguishable from a session with nothing to keep.
+    _fake_claude_on_path(tmp_path, monkeypatch)
+    t = _transcript(tmp_path / "t.jsonl")
+    cases = {
+        "ok": _fake_runner(FACTS_JSON),
+        "empty": _fake_runner("[]"),  # extractor correctly found nothing durable
+        "unparsed": _fake_runner("I would rather not."),  # a reply we could not read
+        "exit-1": _fake_runner("", returncode=1),  # the call itself failed
+    }
+    for runner in cases.values():
+        capture.run_capture(SESSION, t, config, runner=runner)
+    logged = [
+        json.loads(line)
+        for line in (config.logs_dir / "capture.log").read_text().splitlines()
+        if line.strip()
+    ]
+    assert [r["status"] for r in logged] == list(cases)
+
+
+def test_tiny_transcript_skips_the_model_call(
+    make_config: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Below the floor there is too little conversation to distill — don't pay for the call.
+    cfg = make_config(capture={"min_transcript_chars": 100_000})
+    _fake_claude_on_path(tmp_path, monkeypatch)
+    called: dict[str, bool] = {}
+
+    def never(cmd: list[str], **kw: Any) -> SimpleNamespace:
+        called["ran"] = True
+        return SimpleNamespace(returncode=0, stdout=FACTS_JSON, stderr="")
+
+    assert capture.run_capture(SESSION, _transcript(tmp_path / "t.jsonl"), cfg, runner=never) == 0
+    assert not called  # no extraction attempted
+    assert not (cfg.logs_dir / "capture.log").exists()  # and nothing logged
+
+
 def test_hook_recursion_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SUP_MEM_CAPTURE", "1")
     monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
