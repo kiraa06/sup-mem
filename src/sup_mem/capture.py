@@ -106,10 +106,16 @@ def parse_extraction(raw: str, max_memories: int) -> list[dict[str, Any]]:
 
 def extract_with_claude(
     transcript_text: str, config: Config, runner: Runner = subprocess.run
-) -> list[dict[str, Any]]:
-    """One headless small-model call (C1/C5). Empty list on any failure (C2)."""
+) -> tuple[list[dict[str, Any]], str]:
+    """One headless small-model call (C1/C5). Returns ``(facts, status)``; never raises (C2).
+
+    The status distinguishes the ways a call can yield nothing — "the session held nothing
+    durable" (``empty``) reads identically to "the call broke" (``exit-N``/``error``/
+    ``unparsed``) in the fact count alone, and each of those costs a real model call, so the
+    capture log records which one it was.
+    """
     if shutil.which("claude") is None:
-        return []
+        return [], "no-cli"
     import os
 
     prompt = EXTRACTION_PROMPT.format(max_memories=config.capture.max_memories)
@@ -124,10 +130,17 @@ def extract_with_claude(
             env=child_env,
         )
     except Exception:
-        return []
+        return [], "error"
     if int(proc.returncode) != 0:
-        return []
-    return parse_extraction(str(proc.stdout or ""), config.capture.max_memories)
+        return [], f"exit-{int(proc.returncode)}"
+    raw = str(proc.stdout or "")
+    facts = parse_extraction(raw, config.capture.max_memories)
+    if facts:
+        return facts, "ok"
+    # An empty JSON array is the extractor correctly finding nothing; anything else is a
+    # reply we could not read (refusal, prose, truncation) — a different problem entirely.
+    start, end = raw.find("["), raw.rfind("]")
+    return [], "empty" if start != -1 and end > start else "unparsed"
 
 
 def store_facts(facts: list[dict[str, Any]], session_id: str, config: Config) -> list[str]:
@@ -179,9 +192,9 @@ def run_capture(
     """The PreCompact entry: render → extract → store → log. Returns stored count."""
     started = datetime.now(UTC)
     transcript_text = render_transcript_tail(transcript_path, config)
-    if len(transcript_text) < 500:
-        return 0  # nothing substantial to distill
-    facts = extract_with_claude(transcript_text, config, runner=runner)
+    if len(transcript_text) < config.capture.min_transcript_chars:
+        return 0  # too little conversation to be worth a model call
+    facts, status = extract_with_claude(transcript_text, config, runner=runner)
     stored = store_facts(facts, session_id, config)
     _log_capture(
         config,
@@ -191,6 +204,7 @@ def run_capture(
             "trigger": trigger,
             "transcript_chars": len(transcript_text),
             "extracted": len(facts),
+            "status": status,
             "stored": stored,
             "seconds": round((datetime.now(UTC) - started).total_seconds(), 1),
         },

@@ -162,6 +162,9 @@ class CaptureConfig:
     max_memories: int = 8  # cap on facts stored per compaction
     max_transcript_chars: int = 60_000  # tail budget piped to the extractor
     per_turn_chars: int = 2_000  # cap per rendered turn so one giant turn can't eat the budget
+    # Floor on the rendered tail: below this there is too little conversation to be worth a
+    # model call. Measured need — sub-2k-char compactions extracted nothing but still paid.
+    min_transcript_chars: int = 2_000
     timeout_seconds: int = 90  # extraction subprocess timeout (fail-open past it)
 
 
@@ -503,5 +506,6 @@ model = "{c.capture.model}"
 max_memories = {c.capture.max_memories}
 max_transcript_chars = {c.capture.max_transcript_chars}
 per_turn_chars = {c.capture.per_turn_chars}
+min_transcript_chars = {c.capture.min_transcript_chars}  # below this, skip the model call
 timeout_seconds = {c.capture.timeout_seconds}
 """
