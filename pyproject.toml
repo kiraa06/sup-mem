@@ -19,7 +19,10 @@ classifiers = [
 # Base deps only — NO model, NO Docker, NO vector client (I8). SQLite FTS uses the stdlib.
 dependencies = [
     "rich>=13.7",   # pretty doctor/detect tables + reindex progress
-    "mcp>=1.2",     # MCP server (one of the two front-doors, I1); imported lazily in `serve`
+    # MCP server (one of the two front-doors, I1); imported lazily in `serve`. Upper bound is
+    # deliberate: mcp 2.0 removed FastMCP and broke every fresh install while CI (pinned by
+    # uv.lock to 1.x) stayed green. We support 1.x AND 2.x; cap the next major until verified.
+    "mcp>=1.2,<3",
 ]
 
 [project.optional-dependencies]

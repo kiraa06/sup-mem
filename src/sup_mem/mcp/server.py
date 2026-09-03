@@ -11,15 +11,13 @@ instead of loading anything itself (I2). Also usable from Claude Desktop via MCP
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sup_mem.backends import get_backend
 from sup_mem.config import load_config
 from sup_mem.models import Metadata
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
-
     from sup_mem.config import Config
 
 REMEMBER_DESCRIPTION = (
@@ -100,20 +98,41 @@ class MemoryTools:
         self._backend.close()
 
 
-def build_server(config: Config | None = None) -> FastMCP:
-    from mcp.server.fastmcp import FastMCP
+def _server_class() -> Any:
+    """The MCP SDK's ergonomic server facade, across SDK majors.
 
+    mcp 2.0 renamed ``FastMCP`` (``mcp.server.fastmcp``) to ``MCPServer``
+    (``mcp.server.mcpserver``) and dropped the old module outright, which killed
+    `sup-mem serve` on every fresh install (the dependency range allowed 2.x while the
+    lockfile pinned 1.x for CI, so tests stayed green). Both classes take a positional
+    name, a ``.tool(name=, description=)`` decorator, and ``.run()`` defaulting to stdio
+    — our entire usage surface — so supporting both is a two-line import.
+    """
+    try:
+        from mcp.server.mcpserver import MCPServer  # mcp >= 2
+
+        return MCPServer
+    except ModuleNotFoundError:
+        from mcp.server.fastmcp import FastMCP  # mcp 1.x
+
+        return FastMCP
+
+
+def build_server(config: Config | None = None) -> Any:
     resolved = config or load_config()
     tools = MemoryTools(resolved)
-    server = FastMCP("sup-mem")
+    server = _server_class()("sup-mem")
 
-    @server.tool(name="remember", description=REMEMBER_DESCRIPTION)
     def remember(text: str, tags: list[str] | None = None, source: str | None = None) -> str:
         return tools.remember(text, tags=tags, source=source)
 
-    @server.tool(name="recall", description=RECALL_DESCRIPTION)
     def recall(query: str, k: int | None = None, as_of: str | None = None) -> str:
         return tools.recall(query, k=k, as_of=as_of)
+
+    # Registered by call, not decorator syntax: the facade class is Any across SDK majors, and
+    # an untyped decorator would strip these functions' own types under mypy --strict.
+    server.tool(name="remember", description=REMEMBER_DESCRIPTION)(remember)
+    server.tool(name="recall", description=RECALL_DESCRIPTION)(recall)
 
     return server
 

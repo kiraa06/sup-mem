@@ -68,3 +68,23 @@ jobs:
           done
           echo "Qdrant did not become ready" >&2; exit 1
       - run: uv run pytest -q -m "qdrant"
+
+  # The lockfile pins mcp for reproducible CI — which is exactly why mcp 2.0 (it deleted
+  # FastMCP) broke every fresh install while this workflow stayed green. This job installs
+  # the LATEST mcp, unpinned, so an SDK break shows up here instead of in users' installs.
+  test-mcp-latest:
+    name: Tests (latest MCP SDK, unpinned)
+    runs-on: ubuntu-latest
+    continue-on-error: true # advisory: upstream breakage must not block unrelated PRs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Upgrade to the newest mcp the range allows
+        run: uv pip install --upgrade mcp
+      - name: Report resolved version
+        run: uv run python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
+      - name: MCP server must build and expose both tools
+        run: uv run pytest -q tests/test_mcp.py

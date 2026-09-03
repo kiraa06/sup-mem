@@ -55,3 +55,15 @@ async def test_server_registers_exactly_the_two_tools(make_config: Callable[...,
     by_name = {t.name: t for t in tools}
     assert by_name["remember"].description == mcp_server.REMEMBER_DESCRIPTION
     assert by_name["recall"].description == mcp_server.RECALL_DESCRIPTION
+
+
+def test_server_class_resolves_across_sdk_majors() -> None:
+    """The SDK facade must resolve on whatever mcp is installed (1.x FastMCP / 2.x MCPServer).
+
+    mcp 2.0 dropped ``mcp.server.fastmcp``, which killed `sup-mem serve` on fresh installs
+    while CI stayed green (uv.lock pinned 1.x). This fails loudly if neither path exists.
+    """
+    cls = mcp_server._server_class()
+    assert cls.__name__ in {"FastMCP", "MCPServer"}
+    server = cls("probe")  # positional name works on both majors
+    assert callable(server.tool) and callable(server.run)
