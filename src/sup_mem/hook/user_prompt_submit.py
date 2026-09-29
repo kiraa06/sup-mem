@@ -44,10 +44,14 @@ def _read_stdin() -> dict[str, object]:
 
 
 def _read_pinned(config: Config) -> str:
+    """Pinned facts minus '#' note lines — the template's own contract. Injected every turn,
+    so an untouched template (all notes) must cost nothing, not ~86 tokens per turn."""
     try:
-        return config.pinned_facts_path.read_text(encoding="utf-8").strip()
+        text = config.pinned_facts_path.read_text(encoding="utf-8")
     except OSError:
         return ""
+    lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    return "\n".join(lines).strip()
 
 
 def _should_skip(prompt: str, config: Config) -> bool:
