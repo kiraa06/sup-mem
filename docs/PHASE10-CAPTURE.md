@@ -33,10 +33,22 @@ whether they earn their keep, and quarantine/archival handles the ones that don'
 ## Mechanics
 
 stdin: `{session_id, transcript_path, trigger}`. Render the last `capture.max_transcript_chars`
-of main-chain turns (sidechains skipped, per-turn cap) as `USER:/ASSISTANT:` text; pipe into
-`claude -p <extraction prompt> --model <capture.model>`; parse a strict JSON array of at most
+of main-chain turns (sidechains skipped, per-turn cap) as `USER:/ASSISTANT:` text; pipe
+*task → `<transcript>…</transcript>` → task restated* on stdin into `claude -p --model
+<capture.model>` with an extractor role lock (`--append-system-prompt`) and no tools, MCP
+servers or session file (`--tools "" --strict-mcp-config --no-session-persistence`; a CLI
+that rejects one gets a single bare retry); parse a strict JSON array of at most
 `capture.max_memories` `{text, topic, tags}` objects (code-fence tolerant); store each with
 tags + `auto-capture`; append one line to `~/.sup-mem/logs/capture.log` for observability.
+
+The fencing is load-bearing. A tail usually ends mid-request, and an unfenced transcript
+reads as a live conversation: the model *continued* it ("I'll design the job — first I
+need…") instead of distilling it. That was every historical `unparsed` capture.
+
+`capture.log` statuses: `ok` · `empty` (valid JSON, nothing durable — the extractor doing
+its job) · `unparsed` (prose reply) · `bad-json` (an array that broke, e.g. truncation) ·
+`exit-N` · `timeout` · `error` · `no-cli`. Failures carry a one-line `detail` (stderr or
+reply head) so the next one is diagnosable.
 
 ## Acceptance (hermetic — a fake `claude` script; CI never spends tokens)
 

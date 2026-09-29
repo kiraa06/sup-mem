@@ -59,6 +59,26 @@ def test_skip_injects_only_tier0(
     assert "auto-retrieved" not in out  # Tier 2 header absent on a skipped turn
 
 
+def test_pinned_note_lines_are_not_injected(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], data_dir: Path
+) -> None:
+    from sup_mem.commands import PINNED_FACTS_TEMPLATE
+
+    # The untouched `init` template is all '#' notes → nothing injected, every turn.
+    (data_dir / "pinned.md").write_text(PINNED_FACTS_TEMPLATE, encoding="utf-8")
+    rc, out = _run_main("thanks!", monkeypatch, capsys, data_dir)
+    assert rc == 0 and out.strip() == ""
+
+    (data_dir / "pinned.md").write_text(
+        PINNED_FACTS_TEMPLATE + "- Deploys go through the blue-green pipeline.\n",
+        encoding="utf-8",
+    )
+    rc, out = _run_main("thanks!", monkeypatch, capsys, data_dir)
+    assert "Deploys go through the blue-green pipeline." in out
+    assert "Keep this short" not in out  # notes stay notes
+    assert out.count("Pinned facts") == 1  # our header only — not the template's too
+
+
 def test_retrieval_injects_relevant_memory(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], config: Config
 ) -> None:
