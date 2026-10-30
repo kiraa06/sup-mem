@@ -73,10 +73,16 @@ class MemoryTools:
                 instant = _parse_as_of(as_of)
             except SystemExit as exc:
                 return str(exc)
+        threshold = self._config.retrieval.threshold
         try:
-            hits = self._backend.search(
-                query, k=limit, threshold=self._config.retrieval.threshold, as_of=instant
-            )
+            if instant is None:
+                # Mirror the hook: rank an unthresholded pool by outcome evidence FIRST, then
+                # gate and cap. Gating first let chronic-ignore-demoted hits through and let
+                # quarantine return fewer than k.
+                pool_k = max(limit, self._config.ledger.pool_k)
+                hits = self._backend.search(query, k=pool_k, threshold=0.0)
+            else:
+                hits = self._backend.search(query, k=limit, threshold=threshold, as_of=instant)
         except ValueError as exc:  # backend without version history + as_of (T6)
             return str(exc)
         if instant is None:
@@ -86,6 +92,7 @@ class MemoryTools:
                 hits = adjust(hits, self._config)  # outcome boost + quarantine (fail-open, L2)
             except Exception:
                 pass
+            hits = [h for h in hits if h.score >= threshold][:limit]
         if not hits:
             when = f" as of {instant[:19]}" if instant else ""
             return f"No stored memories matched that query{when}."
