@@ -26,7 +26,9 @@ def adjust(hits: list[Hit], config: Config) -> list[Hit]:
     try:
         from sup_mem.ledger import Ledger
 
-        with Ledger(config.ledger_db_path) as ledger:
+        # Short lock wait: this runs on every prompt; a busy ledger means "no boost", not a
+        # stalled turn (the default 5 s wait was measured blocking the hook).
+        with Ledger(config.ledger_db_path, timeout=0.25) as ledger:
             stats = ledger.stats_for([hit.id for hit in hits])
     except Exception:
         return hits  # fail open (L2)
