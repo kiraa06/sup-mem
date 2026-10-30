@@ -122,6 +122,25 @@ class LoggingConfig:
     retrieval_log: bool = True  # log (query, ids, scores, tier) for tuning; on by default (§8)
 
 
+CORRECTION_PATTERNS = (
+    r"^\s*no[,.! ]",
+    r"^\W*(no\W+)?(that|this|it)(.?s| is) (wrong|incorrect|outdated|stale|not right|not true"
+    r"|not correct)\b",
+    r"^\s*actually[, ]",
+    r"\b(wrong|incorrect|outdated|stale)\b.{0,20}\bmemory\b",
+    r"\bmemory\b.{0,20}\b(is|was) (wrong|incorrect|outdated|stale)\b",
+)
+# The pre-0.9.4 defaults, unanchored. The config template writes the list out verbatim, so an
+# untouched config.toml still carries them; load_config upgrades that exact list (only).
+LEGACY_CORRECTION_PATTERNS = [
+    r"^\s*no[,.! ]",
+    r"\bthat.?s (wrong|incorrect|outdated|stale|not right)\b",
+    r"\bnot (true|correct|right)\b",
+    r"\bactually[, ]",
+    r"\b(wrong|incorrect|outdated)\b.{0,20}\bmemory\b",
+]
+
+
 @dataclass
 class LedgerConfig:
     """The outcome loop (docs/PHASE6-LOOP.md): attribution, reinforcement, quarantine."""
@@ -138,17 +157,11 @@ class LedgerConfig:
     chronic_ignore_min_injections: int = 8
     chronic_ignore_max_ref_rate: float = 0.10
     chronic_ignore_penalty: float = 0.20
-    # A correction in the user turn right after a referenced memory flips it to contradicted.
+    # A correction in the user's next prompt after a referenced memory flips it to
+    # contradicted. Anchored to the start of the message: "not right now" or "I actually
+    # want…" mid-sentence are not corrections, and three false hits quarantine a memory.
     # NOTE: rendered as single-quoted TOML literals — keep apostrophes out of these patterns.
-    correction_patterns: list[str] = field(
-        default_factory=lambda: [
-            r"^\s*no[,.! ]",
-            r"\bthat.?s (wrong|incorrect|outdated|stale|not right)\b",
-            r"\bnot (true|correct|right)\b",
-            r"\bactually[, ]",
-            r"\b(wrong|incorrect|outdated)\b.{0,20}\bmemory\b",
-        ]
-    )
+    correction_patterns: list[str] = field(default_factory=lambda: list(CORRECTION_PATTERNS))
 
 
 @dataclass
@@ -396,6 +409,12 @@ def load_config(overrides: dict[str, Any] | None = None) -> Config:
     file_dict = _read_toml(data_dir / "config.toml")
     env_dict = _collect_env(Config(), [])
 
+    ledger_file = file_dict.get("ledger")
+    if (
+        isinstance(ledger_file, dict)
+        and ledger_file.get("correction_patterns") == LEGACY_CORRECTION_PATTERNS
+    ):
+        del ledger_file["correction_patterns"]  # an untouched old default → today's default
     merged = _deep_merge(file_dict, env_dict)
     merged = _deep_merge(merged, overrides)
     merged["data_dir"] = str(data_dir)  # always the fully-resolved dir

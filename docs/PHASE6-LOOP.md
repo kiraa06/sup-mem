@@ -48,15 +48,27 @@ plus `session_id` to `retrieval.jsonl`.
 parses the transcript (main-chain `user`/`assistant` entries only — sidechains are subagent
 noise), and for each **injected** memory:
 
-- **referenced** — the assistant text after the prompt contains enough of the memory's
-  distinctive tokens: `matched >= max(min_overlap_tokens, ceil(overlap_fraction * |tokens|))`.
+- **referenced** — the assistant's *response to that prompt* (its assistant turns up to the
+  user's next real prompt) contains enough of the memory's distinctive tokens:
+  `matched >= max(min_overlap_tokens, ceil(overlap_fraction * |tokens|))`.
 - **ignored** — otherwise.
-- **contradicted** — a referenced memory whose *next user turn* matches a correction pattern
-  (`ledger.correction_patterns`). Checked retroactively on later Stops; flips referenced →
-  contradicted once.
+- **contradicted** — a referenced memory whose user's *next real prompt* (never a compaction
+  summary or host-wrapped entry) matches a correction pattern (`ledger.correction_patterns`,
+  anchored at the start of the message). Checked retroactively on later Stops; flips
+  referenced → contradicted once.
+- **unknown** — the prompt cannot be located in the transcript (e.g. a host notification that
+  fires the prompt hook but is never written as a user turn). No response, no verdict, no
+  counters (L4).
+
+The prompt is located by substring (hosts wrap prompts in `isMeta` envelopes or send them as
+text blocks beside an image), and a repeated prompt resolves to the occurrence nearest the
+retrieval-log ts (±120 s). Before 0.9.4 an unlocated prompt was judged against the *whole
+session*: 41% of judgements, ~91% "referenced" — the inflated boosts fed a rich-get-richer
+loop. The `ledger-repair` maintenance step backs those out once.
 
 Counters accumulate per memory in `ledger.db` (`injected/referenced/ignored/contradicted`,
-token totals, timestamps). Deduped by (session, log line) cursor — re-running is safe.
+token totals, timestamps). Deduped by (session, record ts) — re-running is safe, and log
+rotation cannot make a new turn collide with an old one.
 
 ### Reinforced retrieval (ranking.py)
 `score' = clamp01(score + boost_weight * (referenced − contradicted) / max(injected, 3))`,

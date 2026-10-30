@@ -27,6 +27,7 @@ Temporal model (docs/PHASE8-TEMPORAL.md):
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
@@ -34,6 +35,7 @@ import re
 import sqlite3
 import threading
 from collections import Counter
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -100,25 +102,56 @@ class SqliteFtsBackend(MemoryBackend):
         self._conn.row_factory = sqlite3.Row
         self._chain: ProvenanceChain | None = None
         self._archive_attached = False
-        self._init_schema()
+        migrated = self._init_schema()
         if config.provenance.enabled:
-            with self._lock, self._conn:
+            with self._lock:  # CREATE … IF NOT EXISTS only: no write once the table exists
                 self._chain = ProvenanceChain(self._conn, config.provenance_key_path)
-                self._genesis_events()
+            if migrated:
+                with self._write():
+                    self._genesis_events()  # otherwise backfilled by verify / nightly maintain
         if config.archive_db_path.exists():
             self._ensure_archive()  # cold tier participates in as-of/fetch when present
+
+    @contextlib.contextmanager
+    def _write(self) -> Iterator[None]:
+        """One write transaction that holds SQLite's write lock from its FIRST statement.
+
+        ``BEGIN IMMEDIATE`` makes read-modify-writes atomic across processes — the prompt
+        hook, the MCP server and the capture child all write this file. Under the default
+        deferred BEGIN, the predecessor lookup in ``store`` ran before the lock, and two
+        concurrent stores of one source each left a live version. ``self._lock`` still
+        serializes threads within this process.
+        """
+        with self._lock:
+            if self._conn.in_transaction:  # a stray implicit BEGIN (sqlite3 legacy mode)
+                self._conn.commit()  # — what executescript does too; never nest
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                self._conn.rollback()
+                raise
+            self._conn.commit()
 
     # -- schema + migration -----------------------------------------------------------------
     def _columns(self, table: str) -> set[str]:
         return {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
 
-    def _init_schema(self) -> None:
+    def _init_schema(self) -> bool:
+        """Create / migrate the schema; True when this open changed it.
+
+        A current schema returns before any write: every prompt opens the store, and the
+        unconditional migration UPDATEs + ``user_version`` write used to commit a WAL frame
+        and take the write lock on each one — a busy writer elsewhere then stalled the turn.
+        """
+        with self._lock:
+            self._conn.execute("PRAGMA journal_mode = WAL")  # persistent; a read once set
+            self._conn.execute("PRAGMA synchronous = NORMAL")  # per connection
+            if int(self._conn.execute("PRAGMA user_version").fetchone()[0]) >= _SCHEMA_VERSION:
+                return False
         with self._lock, self._conn:
             self._conn.executescript(
                 """
-                PRAGMA journal_mode = WAL;
-                PRAGMA synchronous = NORMAL;
-
                 CREATE TABLE IF NOT EXISTS memories (
                     id            TEXT PRIMARY KEY,
                     lineage       TEXT NOT NULL DEFAULT '',
@@ -180,9 +213,15 @@ class SqliteFtsBackend(MemoryBackend):
                 # Re-derive the FTS index from the migrated base table (spec: Migration).
                 self._conn.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
             self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+        return True
 
     def _genesis_events(self) -> None:
-        """Pre-provenance rows get a genesis `stored` event so `verify` covers them (PHASE8)."""
+        """Pre-provenance rows get a genesis `stored` event so `verify` covers them (PHASE8).
+
+        Call inside ``_write()``: reading the chain and the rows under the write lock is what
+        keeps a concurrent ``store`` from being seen as a pre-provenance row (a duplicate
+        genesis event). Runs on schema migration and before every ``verify_provenance``.
+        """
         assert self._chain is not None
         recorded = self._chain.latest_payload_hashes()
         rows = self._conn.execute(
@@ -215,7 +254,7 @@ class SqliteFtsBackend(MemoryBackend):
         payload = json.dumps(meta, ensure_ascii=False, sort_keys=True)
         digest = payload_hash(text, meta)
 
-        with self._lock, self._conn:
+        with self._write():
             row = self._conn.execute(
                 "SELECT lineage, metadata, superseded_at FROM memories WHERE id = ?", (mem_id,)
             ).fetchone()
@@ -421,6 +460,14 @@ class SqliteFtsBackend(MemoryBackend):
         )
         self._archive_attached = True
 
+    def is_archived(self, text: str, source: str) -> bool:
+        if not self._archive_attached:
+            return False
+        mem_id = _make_id(text.strip(), source)
+        return bool(
+            self._conn.execute("SELECT 1 FROM archive.memories WHERE id = ?", (mem_id,)).fetchone()
+        )
+
     def db_sizes(self) -> dict[str, int]:
         """Bytes on disk per tier, post-checkpoint (A6)."""
         import os
@@ -477,7 +524,7 @@ class SqliteFtsBackend(MemoryBackend):
         self._ensure_archive()
         now = _now_iso()
         moved: list[str] = []
-        with self._lock, self._conn:
+        with self._write():
             for mem_id in memory_ids:
                 row = self._conn.execute(
                     "SELECT * FROM memories WHERE id = ?", (mem_id,)
@@ -526,15 +573,20 @@ class SqliteFtsBackend(MemoryBackend):
         self._ensure_archive()
         now = _now_iso()
         restored = 0
-        with self._lock, self._conn:
+        with self._write():
             for mem_id in memory_ids:
                 row = self._conn.execute(
                     "SELECT * FROM archive.memories WHERE id = ?", (mem_id,)
                 ).fetchone()
                 if row is None:
                     continue
+                if self._conn.execute("SELECT 1 FROM memories WHERE id = ?", (mem_id,)).fetchone():
+                    # Re-stored since it was archived (same text + source → same id): the main
+                    # copy stands. INSERT OR REPLACE here deleted it WITHOUT the FTS delete
+                    # trigger, orphaning index rows that later matched unrelated memories.
+                    continue
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO memories "
+                    "INSERT INTO memories "
                     "(id, lineage, text, metadata, source, valid_from, recorded_at, "
                     " superseded_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     tuple(
@@ -581,7 +633,7 @@ class SqliteFtsBackend(MemoryBackend):
             if not rows:
                 break
             now = _now_iso()
-            with self._lock, self._conn:
+            with self._write():
                 for row in rows:
                     meta = _load_meta(row["metadata"])
                     self._append_event(
@@ -679,9 +731,15 @@ class SqliteFtsBackend(MemoryBackend):
         }
 
     def verify_provenance(self) -> dict[str, Any]:
-        """Chain + row-hash verification across BOTH tiers (T5, A4). See `sup-mem verify`."""
+        """Chain + row-hash verification across BOTH tiers (T5, A4). See `sup-mem verify`.
+
+        Backfills genesis events first (rows stored while provenance was disabled), which is
+        why opening the store no longer has to scan for them.
+        """
         if self._chain is None:
             return {"ok": True, "events": 0, "reason": "provenance disabled in config"}
+        with self._write():
+            self._genesis_events()
         row_hashes: dict[str, str] = {}
         for row in self._conn.execute("SELECT id, text, metadata FROM memories"):
             row_hashes[str(row["id"])] = payload_hash(str(row["text"]), _load_meta(row["metadata"]))
@@ -696,7 +754,7 @@ class SqliteFtsBackend(MemoryBackend):
 
     def reindex(self, progress: ProgressCallback | None = None) -> None:
         """No-op semantically for a lexical store; we rebuild the FTS index defensively (§6.2)."""
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
         if progress is not None:
             total = int(self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])

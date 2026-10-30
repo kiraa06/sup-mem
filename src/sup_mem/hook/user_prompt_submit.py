@@ -48,7 +48,7 @@ def _read_pinned(config: Config) -> str:
     so an untouched template (all notes) must cost nothing, not ~86 tokens per turn."""
     try:
         text = config.pinned_facts_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):  # ValueError: a non-UTF-8 file (UnicodeDecodeError)
         return ""
     lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
     return "\n".join(lines).strip()
@@ -168,6 +168,15 @@ def _emit(parts: list[str]) -> None:
 
 
 def main() -> int:
+    """Always exit 0 (I2): any unforeseen error becomes "no injection this turn", never a
+    traceback on every prompt — a non-UTF-8 pinned.md once did exactly that."""
+    try:
+        return _main()
+    except Exception:
+        return 0
+
+
+def _main() -> int:
     import os
 
     if os.environ.get("SUP_MEM_CAPTURE"):

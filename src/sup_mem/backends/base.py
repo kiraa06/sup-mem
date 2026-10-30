@@ -67,6 +67,14 @@ class MemoryBackend(ABC):
         """
         return True
 
+    def is_archived(self, text: str, source: str) -> bool:
+        """Whether this exact ``(text, source)`` sits in the cold tier (docs/PHASE9-ARCHIVAL).
+
+        Automatic re-imports (the nightly native sweep) must not resurrect what archival
+        retired. Backends without a cold tier answer False. Optional override.
+        """
+        return False
+
     # --- Lifecycle (optional to override) -------------------------------------------------
     def close(self) -> None:  # noqa: B027
         """Release resources (DB handles, clients). Optional override; default no-op."""
