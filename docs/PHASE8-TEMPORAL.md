@@ -18,8 +18,10 @@ Calling this "bitemporal-lite" in docs is deliberate honesty.
 
 **T3 — Supersession only on specific sources.** A new text arriving with the *same specific
 source* (e.g. `native:<project>/<file>`, `session:*`) supersedes that source's live version
-and inherits its `lineage`. Generic buckets (`mcp:remember`, empty) never supersede — two
-"remember" calls are two independent facts. Re-storing a superseded version's exact text
+and inherits its `lineage`. Generic buckets (empty, and every `mcp:*` source — the MCP
+`remember` tool namespaces any model-supplied `source` as `mcp:<source>`) never supersede —
+two "remember" calls are two independent facts, whatever label they carry. Re-storing a
+superseded version's exact text
 *revives* it (clears `superseded_at`).
 
 **T4 — The hot path only sees live versions.** Hook Tier-2, MCP `recall` (without `as_of`),

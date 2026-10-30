@@ -12,6 +12,7 @@ This module is stdlib-only so it is safe to import on the hook's hot path (I2).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tomllib
@@ -363,6 +364,17 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return {}
 
 
+def create_private_file(path: Path) -> None:
+    """Create ``path`` empty and owner-only (0600) if it does not exist yet.
+
+    Data files hold memories and prompt text. Creating them 0600 up front (O_EXCL) leaves no
+    world-readable window, and SQLite gives its -wal/-shm side files the db file's mode. An
+    existing file is never touched — its mode is its owner's call. One syscall when present.
+    """
+    with contextlib.suppress(FileExistsError):
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+
+
 def _resolve_data_dir(overrides: dict[str, Any]) -> Path:
     if "data_dir" in overrides and overrides["data_dir"]:
         return Path(str(overrides["data_dir"])).expanduser()
@@ -465,6 +477,11 @@ boost_weight = {c.ledger.boost_weight}       # bounded score adjustment from out
 quarantine_contradictions = {c.ledger.quarantine_contradictions}
 min_overlap_tokens = {c.ledger.min_overlap_tokens}
 overlap_fraction = {c.ledger.overlap_fraction}
+# Chronic-ignore demotion: injected >= min_injections times yet referenced at <= max_ref_rate
+# → down-ranked by penalty (a demotion, not a drop — a strong match can still win).
+chronic_ignore_min_injections = {c.ledger.chronic_ignore_min_injections}
+chronic_ignore_max_ref_rate = {c.ledger.chronic_ignore_max_ref_rate}
+chronic_ignore_penalty = {c.ledger.chronic_ignore_penalty}
 correction_patterns = {_arr(c.ledger.correction_patterns)}
 
 [maintenance]
@@ -509,3 +526,111 @@ per_turn_chars = {c.capture.per_turn_chars}
 min_transcript_chars = {c.capture.min_transcript_chars}  # below this, skip the model call
 timeout_seconds = {c.capture.timeout_seconds}
 """
+
+
+# --------------------------------------------------------------------------------------------
+# In-place edits (tune --apply / maintain auto-tune)
+# --------------------------------------------------------------------------------------------
+
+
+class ConfigEditError(ValueError):
+    """``config.toml`` could not be edited safely; it was left untouched."""
+
+
+def _toml_scalar(value: float) -> str:
+    # repr keeps a float a float ("1.0", never "1"); ints render bare.
+    return repr(value) if isinstance(value, float) else str(value)
+
+
+def set_retrieval_keys(path: Path, changes: dict[str, float]) -> None:
+    """Set keys of the ``[retrieval]`` table IN PLACE — every other byte of the file survives.
+
+    Re-rendering the whole file from the template (the old behaviour) dropped user comments
+    and keys the template lacked, and persisted any active ``SUP_MEM_*`` env override. Here
+    each changed key's value is rewritten on its own line (its inline comment kept); a key
+    missing from ``[retrieval]`` is inserted under the header; a missing table is appended.
+    A missing file starts from the pristine template, never from the env-merged config.
+
+    Raises ``ConfigEditError`` — file untouched — when the existing file does not parse as
+    TOML, or when the result would differ from the original in anything but ``changes``
+    (an unusual layout, e.g. dotted ``retrieval.k`` keys). The write is atomic (temp file in
+    the same dir + ``os.replace``) after copying the original to ``config.toml.bak``.
+    """
+    import copy
+    import re
+    import shutil
+    import tempfile
+
+    target = path.resolve()  # edit a symlink's target; never replace the link with a file
+    if target.exists():
+        try:
+            original = target.read_text(encoding="utf-8")
+            before = tomllib.loads(original)
+        except (OSError, ValueError) as exc:  # TOMLDecodeError / UnicodeDecodeError
+            raise ConfigEditError(
+                f"{path} is not valid TOML ({exc}) — left untouched. Fix it: until then "
+                "sup-mem ignores the file and runs on defaults."
+            ) from exc
+    else:
+        original = render_default_toml()
+        before = tomllib.loads(original)
+
+    def _line(key: str, value: float) -> str:
+        return f"{key} = {_toml_scalar(value)}\n"
+
+    lines = original.splitlines(keepends=True)
+    header = re.compile(r"^\s*\[(?P<aot>\[)?\s*(?P<name>[^\]]*?)\s*\]")
+    heads = [i for i, line in enumerate(lines) if header.match(line)]
+    section = None
+    for i in heads:
+        m = header.match(lines[i])
+        if m and not m["aot"] and m["name"].strip("\"'") == "retrieval":
+            section = i
+            break
+    if section is None:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.extend(["\n", "[retrieval]\n", *(_line(k, v) for k, v in changes.items())])
+    else:
+        end = next((i for i in heads if i > section), len(lines))
+        for key, value in changes.items():
+            pattern = re.compile(rf"^(\s*{re.escape(key)}\s*=\s*)[^\s#]+(.*)$", re.DOTALL)
+            for i in range(section + 1, end):
+                if m := pattern.match(lines[i]):
+                    lines[i] = f"{m[1]}{_toml_scalar(value)}{m[2]}"  # inline comment kept
+                    break
+            else:
+                if not lines[section].endswith("\n"):
+                    lines[section] += "\n"
+                lines.insert(section + 1, _line(key, value))
+                end += 1
+    text = "".join(lines)
+
+    # Prove the edit: the result must equal the original with exactly ``changes`` applied.
+    expected = copy.deepcopy(before)
+    after: Any = None
+    with contextlib.suppress(AttributeError, ValueError):  # non-table retrieval / bad TOML
+        expected.setdefault("retrieval", {}).update(changes)
+        after = tomllib.loads(text)
+    if after != expected:
+        wanted = ", ".join(_line(k, v).strip() for k, v in changes.items())
+        raise ConfigEditError(
+            f"could not edit [retrieval] in {path} safely (unusual layout) — left untouched. "
+            f"Set {wanted} under [retrieval] by hand."
+        )
+
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if target.exists():
+        shutil.copy2(target, target.with_name(target.name + ".bak"))
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if target.exists():
+            shutil.copymode(target, tmp)  # keep the user's permissions on the new inode
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)

@@ -205,6 +205,48 @@ def test_auto_tune_respects_disable(make_config: Callable[..., Config]) -> None:
     assert maintenance.auto_tune(cfg).status == "skipped"
 
 
+def test_auto_tune_edits_in_place_without_persisting_env(
+    make_config: Callable[..., Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Unattended nightly write: user comments + keys the template lacks survive, and an active
+    # SUP_MEM_* override is not baked into the file.
+    cfg = make_config(maintenance={"tune_min_attributed": 1})
+    original = (
+        "# hand-written\n[retrieval]\nthreshold = 0.35  # mine\nk = 3\n\n"
+        "[ledger]\nchronic_ignore_penalty = 0.4  # custom\n"
+    )
+    cfg.config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("SUP_MEM_CAPTURE_MODEL", "opus")
+    _seed_candidate(cfg.ledger_db_path, 0, "a", 0.8, "referenced")
+    _seed_candidate(cfg.ledger_db_path, 1, "b", 0.4, "ignored")
+
+    result = maintenance.auto_tune(cfg)
+    assert result.status == "ok" and "applied" in result.detail
+    assert cfg.config_path.read_text(encoding="utf-8") == original.replace(
+        "threshold = 0.35  # mine\nk = 3", "threshold = 0.8  # mine\nk = 1"
+    )
+
+
+def test_auto_tune_never_overwrites_malformed_config(make_config: Callable[..., Config]) -> None:
+    cfg = make_config(maintenance={"tune_min_attributed": 1})
+    broken = 'backend = "sqlite_fts\n'  # unterminated string
+    cfg.config_path.write_text(broken, encoding="utf-8")
+    _seed_candidate(cfg.ledger_db_path, 0, "a", 0.8, "referenced")
+    _seed_candidate(cfg.ledger_db_path, 1, "b", 0.4, "ignored")
+
+    result = maintenance.auto_tune(cfg)
+    assert result.status == "failed" and "not valid TOML" in result.detail  # reported
+    assert cfg.config_path.read_text(encoding="utf-8") == broken  # not replaced by defaults
+
+
+def test_rotate_keeps_the_log_file_mode(config: Config) -> None:
+    lines = [_log_line("A", 30), _log_line("A", 0)]
+    config.retrieval_log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    config.retrieval_log_path.chmod(0o600)
+    assert maintenance.rotate_log(config).status == "ok"
+    assert config.retrieval_log_path.stat().st_mode & 0o777 == 0o600
+
+
 # --- the full run ---------------------------------------------------------------------------
 def test_run_maintenance_is_green_and_idempotent(
     config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

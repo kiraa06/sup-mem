@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sup_mem.backends.base import MemoryBackend, ProgressCallback
+from sup_mem.config import create_private_file
 from sup_mem.models import Hit, Metadata
 from sup_mem.provenance import ProvenanceChain, payload_hash
 
@@ -50,8 +51,15 @@ _POOL_CAP = 256  # candidates fetched (bm25-ordered) before coverage re-ranking
 _SCHEMA_VERSION = 2
 
 # Sources that are buckets, not identities: a new text under them is a NEW fact line, never a
-# supersession of the previous one (T3).
+# supersession of the previous one (T3). Every ``mcp:``-prefixed source is a bucket too — the
+# model labels those (MCP ``remember``), and a label like "user" must not let one unrelated
+# fact silently retire another.
 GENERIC_SOURCES = frozenset({"", "mcp:remember"})
+GENERIC_SOURCE_PREFIX = "mcp:"
+
+
+def is_generic_source(source: str) -> bool:
+    return source in GENERIC_SOURCES or source.startswith(GENERIC_SOURCE_PREFIX)
 
 
 def _now_iso() -> str:
@@ -84,7 +92,8 @@ class SqliteFtsBackend(MemoryBackend):
         self._config = config
         self._fts = config.fts
         self._lock = threading.Lock()
-        config.data_dir.mkdir(parents=True, exist_ok=True)
+        config.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        create_private_file(config.db_path)  # 0600 when new; an existing db keeps its mode
         # check_same_thread=False: the long-lived MCP server may touch the conn from anyio
         # worker threads; all writes are serialized by self._lock.
         self._conn = sqlite3.connect(str(config.db_path), check_same_thread=False)
@@ -247,7 +256,7 @@ class SqliteFtsBackend(MemoryBackend):
 
             # New version. A specific source supersedes its own live predecessors (T3).
             lineage = mem_id
-            if source not in GENERIC_SOURCES:
+            if not is_generic_source(source):
                 predecessors = self._conn.execute(
                     "SELECT id, lineage FROM memories WHERE source = ? AND superseded_at IS NULL",
                     (source,),
@@ -391,6 +400,7 @@ class SqliteFtsBackend(MemoryBackend):
     def _ensure_archive(self) -> None:
         if self._archive_attached:
             return
+        create_private_file(self._config.archive_db_path)  # cold memories: 0600 when new
         self._conn.execute("ATTACH DATABASE ? AS archive", (str(self._config.archive_db_path),))
         self._conn.executescript(
             """

@@ -24,6 +24,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sup_mem.config import create_private_file
+
 if TYPE_CHECKING:
     from sup_mem.config import Config
 
@@ -251,7 +253,8 @@ CREATE TABLE IF NOT EXISTS stats (
 
 class Ledger:
     def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        create_private_file(path)  # 0600 when new; an existing ledger keeps its mode
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row

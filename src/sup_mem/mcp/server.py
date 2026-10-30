@@ -24,7 +24,10 @@ REMEMBER_DESCRIPTION = (
     "Store a durable fact, decision, preference, or correction that should persist across "
     "future sessions. Call when the user says things like 'remember that…', 'we decided…', "
     "'going forward, always…', or states a stable fact about their systems/preferences. "
-    "Do NOT call for transient, turn-specific details or things already obviously stored."
+    "Do NOT call for transient, turn-specific details or things already obviously stored. "
+    "Every call stores a new, independent memory: `source` is an optional provenance label "
+    "only — it never updates or replaces an earlier memory, so a correction must be stated "
+    "in full as its own fact."
 )
 
 RECALL_DESCRIPTION = (
@@ -48,7 +51,13 @@ class MemoryTools:
         text = text.strip()
         if not text:
             return "Nothing to store (empty text)."
-        metadata: Metadata = {"source": source or "mcp:remember"}
+        # ``source`` is model-supplied, so it is only ever a label: namespaced under ``mcp:`` it
+        # lands in a generic bucket the backend never supersedes on. A bare specific source
+        # (e.g. "user") made each new fact silently retire every live one with that label.
+        label = (source or "").strip()
+        if label and not label.startswith("mcp:"):
+            label = f"mcp:{label}"
+        metadata: Metadata = {"source": label or "mcp:remember"}
         if tags:
             metadata["tags"] = list(tags)
         mem_id = self._backend.store(text, metadata)
