@@ -364,3 +364,16 @@ def test_legacy_default_correction_patterns_are_upgraded(make_config: object) ->
     cfg.config_path.write_text("[ledger]\ncorrection_patterns = ['^custom']\n")
     custom = load_config(overrides={"data_dir": str(cfg.data_dir)})
     assert custom.ledger.correction_patterns == ["^custom"]  # a user's own list is respected
+
+
+def test_only_injected_rows_keep_the_prompt(
+    config: Config, seeded: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run_stop(config, seeded["transcript"], monkeypatch)  # type: ignore[arg-type]
+    with Ledger(config.ledger_db_path) as ledger:
+        rows = ledger._conn.execute("SELECT memory_id, injected, query FROM candidates").fetchall()
+        assert {(r["injected"], bool(r["query"])) for r in rows} == {(1, True), (0, False)}
+        ledger._conn.execute("UPDATE candidates SET query = 'legacy copy' WHERE injected = 0")
+        ledger._conn.commit()
+        assert ledger.trim_candidate_queries() == 1  # the never-injected "ghost" row
+        assert ledger.trim_candidate_queries() == 0

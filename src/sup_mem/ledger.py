@@ -453,7 +453,10 @@ class Ledger:
                             session_id,
                             _turn_key(str(record.get("ts", "")), line_no),
                             mem_id,
-                            str(record.get("query", "")),
+                            # Only injected rows are ever attributed (the one reader of the
+                            # prompt); the other ~9 pool rows per turn kept a 500-char copy of
+                            # it each — 75% of query bytes, multiplied again by every backup.
+                            str(record.get("query", "")) if injected else "",
                             score,
                             injected,
                             tokens,
@@ -569,6 +572,15 @@ class Ledger:
                         "UPDATE candidates SET contra_done = 1 WHERE rowid = ?", (row["rowid"],)
                     )
         return report
+
+    def trim_candidate_queries(self) -> int:
+        """Blank the prompt copy on never-injected candidate rows (nothing reads it). Naturally
+        idempotent; the space comes back at the next VACUUM. Returns rows trimmed."""
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE candidates SET query = '' WHERE injected = 0 AND query != ''"
+            )
+        return int(cur.rowcount)
 
     def repair_unlocated(self) -> int:
         """One-time repair (ledger meta ``repair_unlocated_v1``): back out of ``stats`` every

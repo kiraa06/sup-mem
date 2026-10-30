@@ -176,9 +176,13 @@ def repair_ledger(config: Config) -> StepResult:
 
     with Ledger(config.ledger_db_path) as ledger:
         repaired = ledger.repair_unlocated()
-    if not repaired:
-        return _result("ledger-repair", "ok", "nothing to repair")
-    return _result("ledger-repair", "ok", f"{repaired} unlocated attributions → unknown")
+        trimmed = ledger.trim_candidate_queries()
+    notes = []
+    if repaired:
+        notes.append(f"{repaired} unlocated attributions → unknown")
+    if trimmed:
+        notes.append(f"prompt copies trimmed from {trimmed} pool rows")
+    return _result("ledger-repair", "ok", "; ".join(notes) or "nothing to repair")
 
 
 # --------------------------------------------------------------------------------------------
