@@ -10,6 +10,7 @@ with a detail string and never aborts the run. Steps:
   manifest  — refresh the session-start manifest cache
   vacuum    — compact the live databases
   health    — backend health + I7 consistency; failures trigger a macOS notification
+  capture-health — recent PreCompact capture failures from capture.log (``warn``, with the fix)
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 @dataclass
 class StepResult:
     name: str
-    status: str  # "ok" | "skipped" | "failed"
+    status: str  # "ok" | "skipped" | "warn" (needs a look; the run still succeeded) | "failed"
     detail: str
 
 
@@ -346,6 +347,29 @@ def check_health(config: Config) -> StepResult:
     return _result("health", "ok", f"{health.get('backend')}: {health.get('count')} memories")
 
 
+def check_capture_health(config: Config) -> StepResult:
+    """Recent PreCompact capture failures, so a dead `claude` login lands in maintain.log.
+
+    ``warn``, not ``failed``: the maintenance itself worked, and a failed run would hold back
+    the `last-maintain` stamp. Never raises.
+    """
+    if not config.capture.enabled:
+        return _result("capture-health", "skipped", "disabled in config")
+    try:
+        from sup_mem.capture import capture_health, capture_remedy
+
+        health = capture_health(config)
+        if not health.last_ts:
+            return _result("capture-health", "skipped", health.summary())
+        if health.failing:
+            fix = capture_remedy(health.last_status, config)
+            # fix first: notifications truncate the detail
+            return _result("capture-health", "warn", f"fix: {fix} · {health.summary()}")
+        return _result("capture-health", "ok", health.summary())
+    except Exception as exc:
+        return _result("capture-health", "warn", f"could not read capture.log: {exc}")
+
+
 def notify_user(title: str, message: str) -> None:
     """Best-effort desktop notification (macOS osascript / Linux notify-send); never raises."""
     with contextlib.suppress(Exception):
@@ -373,6 +397,7 @@ _STEPS = [
     vacuum_stores,
     check_provenance,
     check_health,
+    check_capture_health,
 ]
 
 
@@ -393,6 +418,12 @@ def run_maintenance(config: Config) -> list[StepResult]:
     elif config.maintenance.notify:
         summary = "; ".join(f"{r.name}: {r.detail[:80]}" for r in failures)
         notify_user("sup-mem maintain", f"{len(failures)} step(s) failed — {summary}")
+    # A warning (e.g. a dead `claude` login failing every capture) is only useful if seen —
+    # maintain.log is not. Notify for it too, without failing the run.
+    warnings = [r for r in results if r.status == "warn"]
+    if warnings and config.maintenance.notify:
+        summary = "; ".join(f"{r.name}: {r.detail[:120]}" for r in warnings)
+        notify_user("sup-mem maintain", f"needs a look — {summary}")
     return results
 
 
