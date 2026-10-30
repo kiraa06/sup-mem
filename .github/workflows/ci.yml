@@ -84,7 +84,9 @@ jobs:
       - run: uv sync
       - name: Upgrade to the newest mcp the range allows
         run: uv pip install --upgrade mcp
+      # --no-sync: plain `uv run` re-syncs the venv to uv.lock first, silently putting the
+      # locked mcp back — this job was testing 1.28.1 while claiming "latest".
       - name: Report resolved version
-        run: uv run python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
+        run: uv run --no-sync python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
       - name: MCP server must build and expose both tools
-        run: uv run pytest -q tests/test_mcp.py
+        run: uv run --no-sync pytest -q tests/test_mcp.py

@@ -1,0 +1,24 @@
+name: Upstream canary
+
+# Weekly: resolve every dependency to the newest version our ranges allow and run the whole
+# suite. CI proper is pinned by uv.lock and only runs on push/PR — mcp 2.0 broke every fresh
+# install while main was green and nothing was being pushed. A failure here is a scheduled-run
+# failure, so GitHub notifies the owner: deliberately NO continue-on-error.
+# (GitHub pauses schedules after 60 days without repo activity; re-enable from the Actions tab.)
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  latest-deps:
+    name: Tests (newest deps the ranges allow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Resolve to the newest allowed versions (runner-local; the lockfile is not committed)
+        run: uv sync --upgrade
+      - name: Report what fresh installs get today
+        run: uv run python -c "import importlib.metadata as m; [print(p, m.version(p)) for p in ('mcp', 'rich')]"
+      - run: uv run pytest -q
