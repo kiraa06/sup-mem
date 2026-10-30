@@ -367,7 +367,9 @@ def _parse_as_of(raw: str) -> str:
         parsed = datetime.fromisoformat(value)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-        return parsed.isoformat()
+        # Stored timestamps are UTC ISO strings compared as text: a +05:30 instant must be
+        # converted, or "10:00+05:30" (04:30Z) would sort after a 06:00Z row.
+        return parsed.astimezone(UTC).isoformat()
     except ValueError as exc:
         raise SystemExit(f"invalid --as-of {raw!r}: use YYYY-MM-DD or an ISO timestamp") from exc
 

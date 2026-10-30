@@ -102,7 +102,9 @@ def _store_fingerprint(config: Config) -> str:
 
 
 def backup_stores(config: Config) -> StepResult:
-    targets = [p for p in (config.db_path, config.ledger_db_path) if p.exists()]
+    # archive.db included: archived versions exist nowhere else once older snapshots age out.
+    stores = (config.db_path, config.ledger_db_path, config.archive_db_path)
+    targets = [p for p in stores if p.exists()]
     if not targets:
         return _result("backup", "skipped", "no local databases to back up")
     config.backups_dir.mkdir(parents=True, exist_ok=True)
