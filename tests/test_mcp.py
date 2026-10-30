@@ -38,6 +38,30 @@ def test_remember_ignores_empty_text(make_config: Callable[..., Config]) -> None
         tools.close()
 
 
+def test_model_supplied_source_never_supersedes(make_config: Callable[..., Config]) -> None:
+    # Two unrelated facts the model labels source="user": both must stay live. A bare specific
+    # source made the second silently supersede the first (T3 supersession by source).
+    import sqlite3
+
+    cfg = make_config(backend="sqlite_fts")
+    tools = mcp_server.MemoryTools(cfg)
+    try:
+        tools.remember("The staging cluster runs in eu-central-1.", source="user")
+        tools.remember("The user prefers squash merges on feature branches.", source="user")
+        tools.remember("Deploys freeze on Fridays after 3pm.", source="mcp:ops")  # no double ns
+    finally:
+        tools.close()
+    conn = sqlite3.connect(str(cfg.db_path))
+    rows = conn.execute("SELECT source, superseded_at FROM memories ORDER BY source").fetchall()
+    conn.close()
+    assert rows == [("mcp:ops", None), ("mcp:user", None), ("mcp:user", None)]  # all live
+
+
+def test_remember_description_is_honest_about_source() -> None:
+    desc = mcp_server.REMEMBER_DESCRIPTION.lower()
+    assert "source" in desc and "never updates or replaces" in desc
+
+
 def test_tool_descriptions_are_the_control_surface() -> None:
     # I5: shipped roughly verbatim from §6.5 — these strings are how Claude decides to call.
     assert "durable fact" in mcp_server.REMEMBER_DESCRIPTION.lower()

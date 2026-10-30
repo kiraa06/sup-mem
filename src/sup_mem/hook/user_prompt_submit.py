@@ -128,6 +128,7 @@ def _log(
     if not config.logging.retrieval_log:
         return
     with contextlib.suppress(Exception):
+        import os
         from datetime import UTC, datetime
 
         injected_ids = {h.id for h in hits}
@@ -151,8 +152,13 @@ def _log(
                 for h in (pool if pool is not None else hits)
             ],
         }
-        config.data_dir.mkdir(parents=True, exist_ok=True)
-        with config.retrieval_log_path.open("a", encoding="utf-8") as fh:
+        config.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # The log holds each prompt's head: created 0600. The mode applies only on creation,
+        # so an existing log keeps its own and the hot path pays no extra syscall.
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        with os.fdopen(
+            os.open(config.retrieval_log_path, flags, 0o600), "a", encoding="utf-8"
+        ) as fh:
             fh.write(json.dumps(record) + "\n")
 
 

@@ -48,7 +48,13 @@ def _hook_commands(settings: dict[str, Any], event: str) -> list[str]:
 def collect_checks(
     config: Config, *, claude_dir: Path | None = None, claude_json: Path | None = None
 ) -> list[Check]:
-    from sup_mem.registration import CLAUDE_EVENTS, MCP_SERVER_NAME, SCRIPTS, claude_config_dir
+    from sup_mem.registration import (
+        CLAUDE_EVENTS,
+        MCP_SERVER_NAME,
+        SCRIPTS,
+        claude_config_dir,
+        command_executable,
+    )
 
     checks: list[Check] = []
     directory = claude_config_dir(claude_dir)
@@ -62,7 +68,7 @@ def collect_checks(
         if not commands:
             checks.append(Check(f"hook:{event}", False, "not registered", "run: sup-mem init"))
             continue
-        binary = commands[0]
+        binary = command_executable(commands[0]) or commands[0]  # undo shell quoting
         exists = Path(binary).exists() if "/" in binary else shutil.which(binary) is not None
         checks.append(
             Check(

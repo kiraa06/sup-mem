@@ -71,6 +71,7 @@ def rotate_log(config: Config) -> StepResult:
 
     tmp = path.with_suffix(".jsonl.tmp")
     tmp.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    shutil.copymode(path, tmp)  # the log holds prompt text — keep its (0600) mode on rotate
     tmp.replace(path)
 
     if config.ledger_db_path.exists():
@@ -242,7 +243,7 @@ def auto_tune(config: Config) -> StepResult:
     recommended = recommend_threshold(replay_thresholds(turns, current_k, current), current)
     k_recommended = recommend_k(replay_k(turns, current, current_k), current_k)
 
-    changes: dict[str, object] = {}
+    changes: dict[str, float] = {}
     notes: list[str] = []
     if recommended != round(current, 2):
         changes["threshold"] = recommended
@@ -253,11 +254,14 @@ def auto_tune(config: Config) -> StepResult:
     if not changes:
         return _result("auto-tune", "ok", f"threshold {current}, k {current_k} already optimal")
 
-    from sup_mem.config import load_config, render_default_toml
+    from sup_mem.config import ConfigEditError, set_retrieval_keys
 
-    # One combined write — both knobs land in a single render (a second write would clobber).
-    updated = load_config(overrides={"data_dir": str(config.data_dir), "retrieval": changes})
-    updated.config_path.write_text(render_default_toml(updated), encoding="utf-8")
+    # One in-place edit of just these keys — unattended, so it must never re-render the file
+    # (dropping comments/keys, persisting env overrides) or overwrite one it cannot parse.
+    try:
+        set_retrieval_keys(config.config_path, changes)
+    except ConfigEditError as exc:
+        return _result("auto-tune", "failed", str(exc))
     return _result("auto-tune", "ok", f"{'; '.join(notes)} (lossless, applied)")
 
 

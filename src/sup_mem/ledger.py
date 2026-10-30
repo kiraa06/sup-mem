@@ -26,6 +26,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sup_mem.config import create_private_file
+
 if TYPE_CHECKING:
     from sup_mem.config import Config
 
@@ -347,7 +349,8 @@ class Ledger:
     def __init__(self, path: Path, timeout: float = 5.0) -> None:
         """``timeout`` bounds lock waits; the per-prompt ranking read passes a short one so a
         concurrent Stop-hook write can never stall the user's turn (L1/L2)."""
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        create_private_file(path)  # 0600 when new; an existing ledger keeps its mode
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(path), timeout=timeout, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
