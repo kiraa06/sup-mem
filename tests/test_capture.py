@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -285,6 +286,93 @@ def test_real_failure_is_not_retried_and_logs_stderr(
     assert record["status"] == "exit-1" and record["detail"] == "API Error: 529 overloaded"
 
 
+def test_dead_cli_login_is_logged_as_auth(
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: an expired OAuth refresh token failed every capture as a bare `exit-1`, which
+    # nothing distinguished from a transient API error. Only `claude auth login` fixes it.
+    _fake_claude_on_path(tmp_path, monkeypatch)
+    t = _transcript(tmp_path / "t.jsonl")
+    expired = "Failed to authenticate: OAuth session expired and could not be refreshed\n"
+
+    def fails(stderr: str, stdout: str = "") -> Any:
+        return lambda cmd, **kw: SimpleNamespace(returncode=1, stdout=stdout, stderr=stderr)
+
+    capture.run_capture(SESSION, t, config, runner=fails(expired))
+    capture.run_capture(SESSION, t, config, runner=fails("", stdout="Invalid API key · /login"))
+    capture.run_capture(SESSION, t, config, runner=fails("API Error: 529 overloaded"))
+    log_lines = (config.logs_dir / "capture.log").read_text().splitlines()
+    logged = [json.loads(line) for line in log_lines]
+    assert [r["status"] for r in logged] == ["auth", "auth", "exit-1"]
+    assert logged[0]["detail"] == expired.strip()  # detail unchanged — still diagnosable
+    assert logged[1]["detail"] == "Invalid API key · /login"  # stdout when stderr is empty
+
+
+# --- capture health (read back by status + maintain) ----------------------------------------
+def _capture_line(days_old: float, status: str, detail: str = "") -> str:
+    record: dict[str, Any] = {
+        "ts": (datetime.now(UTC) - timedelta(days=days_old)).isoformat(),
+        "session_id": SESSION,
+        "status": status,
+        "extracted": 0,
+        "stored": [],
+    }
+    if detail:
+        record["detail"] = detail
+    return json.dumps(record)
+
+
+def test_capture_health_summarizes_recent_failures(config: Config) -> None:
+    config.logs_dir.mkdir(parents=True)
+    (config.logs_dir / "capture.log").write_text(
+        "\n".join(
+            [
+                _capture_line(10, "timeout", "no reply within 90s"),  # outside the 7d window
+                _capture_line(3, "ok"),
+                "{not json",  # malformed lines are skipped, never fatal
+                '["a list"]',
+                json.dumps({"status": "ok"}),  # no ts
+                _capture_line(2, "empty"),
+                _capture_line(1, "auth", "Failed to authenticate: OAuth session expired"),
+                json.dumps({"ts": datetime.now(UTC).isoformat(), "extracted": 1}),  # pre-status
+                _capture_line(0.5, "auth", "Failed to authenticate: OAuth session expired"),
+            ]
+        )
+        + "\n"
+    )
+    health = capture.capture_health(config)
+    assert (health.recent, health.failures) == (5, 2)  # the 10-day-old timeout aged out
+    assert health.last_status == "auth" and health.last_ts
+    assert health.last_failure_status == "auth"
+    assert "OAuth session expired" in health.last_failure_detail
+    assert health.summary().startswith("2 of 5 failed in 7d · last ")
+    assert capture.capture_remedy("auth", config) == "run `claude auth login` in a terminal"
+    assert "capture.timeout_seconds" in capture.capture_remedy("timeout", config)
+    assert "PATH" in capture.capture_remedy("no-cli", config)
+    assert str(config.logs_dir / "capture.log") in capture.capture_remedy("exit-1", config)
+
+
+def test_capture_health_tolerates_missing_log_and_reads_only_the_tail(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    empty = capture.capture_health(config)  # no capture.log at all
+    assert (empty.last_ts, empty.recent, empty.failures) == ("", 0, 0)
+    assert empty.summary() == "no captures logged yet"
+
+    config.logs_dir.mkdir(parents=True)
+    old_failures = [_capture_line(1, "exit-1", "boom")] * 50
+    (config.logs_dir / "capture.log").write_text(
+        "\n".join(old_failures + [_capture_line(0, "ok")] * 250) + "\n"
+    )
+    health = capture.capture_health(config)
+    assert (health.recent, health.failures) == (200, 0)  # bounded tail: only the last 200 lines
+    assert health.summary().startswith("200 ok in 7d · last ")
+
+    monkeypatch.setattr(capture, "_HEALTH_TAIL_BYTES", 1_000)  # a log far past the byte cap
+    clipped = capture.capture_health(config)
+    assert 0 < clipped.recent < 10 and clipped.failures == 0  # read from the end, cut line dropped
+
+
 def test_tiny_transcript_skips_the_model_call(
     make_config: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -361,3 +449,12 @@ def test_transcript_rendering_respects_budget(make_config: Any, tmp_path: Path) 
     assert "assistant reply 9" in text.lower()  # newest turns win
     assert "turn 0 about deploys" not in text.lower()  # oldest turns dropped under budget
     assert "USER:" in text and "ASSISTANT:" in text
+
+
+def test_rendering_skips_host_wrapped_meta_entries(make_config: Any, tmp_path: Path) -> None:
+    path = _transcript(tmp_path / "t.jsonl", n_turns=2)
+    with path.open("a", encoding="utf-8") as fh:
+        meta = {"role": "user", "content": "<skill-expansion> boilerplate " * 10}
+        fh.write(json.dumps({"type": "user", "isMeta": True, "message": meta}) + "\n")
+    text = capture.render_transcript_tail(path, make_config())
+    assert "skill-expansion" not in text and "assistant reply 1" in text

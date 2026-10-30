@@ -16,7 +16,8 @@ import json
 import re
 import shutil
 import subprocess
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -70,6 +71,23 @@ HARDENING_FLAGS = (
 _ARRAY_START = re.compile(r"\[\s*[{\]]")
 _DETAIL_CHARS = 200
 
+# A non-zero exit whose output mentions any of these (case-insensitive) is a dead or missing
+# CLI login, logged as status ``auth``: no retry or config change fixes it, only the user
+# running `claude auth login`. Seen live: "Failed to authenticate: OAuth session expired and
+# could not be refreshed". Keep the list short — each entry is a known CLI auth message.
+AUTH_FAILURE_MARKERS = (
+    "failed to authenticate",
+    "/login",  # "Please run /login"
+    "oauth",
+    "not logged in",
+    "invalid api key",
+)
+
+# Statuses that are the extractor doing its job; everything else in capture.log is a failure.
+HEALTHY_STATUSES = frozenset({"ok", "empty"})
+_HEALTH_TAIL_LINES = 200
+_HEALTH_TAIL_BYTES = 256 * 1024  # bounds the read no matter how long capture.log grows
+
 # Injectable for tests; matches subprocess.run's shape.
 Runner = Any
 
@@ -91,6 +109,8 @@ def render_transcript_tail(transcript_path: Path, config: Config) -> str:
     rendered: list[str] = []
     used = 0
     for turn in reversed(turns):
+        if turn.kind == "meta":
+            continue  # host-wrapped entries (skill/command expansions), not the conversation
         text = turn.text[:per_turn]
         block = f"{turn.role.upper()}: {text}"
         if used + len(block) > budget and rendered:
@@ -173,6 +193,11 @@ def _one_line(text: str) -> str:
     return " ".join(str(text or "").split())[:_DETAIL_CHARS]
 
 
+def _is_auth_failure(output: str) -> bool:
+    lowered = output.lower()
+    return any(marker in lowered for marker in AUTH_FAILURE_MARKERS)
+
+
 def extract_with_claude(
     transcript_text: str, config: Config, runner: Runner = subprocess.run
 ) -> tuple[list[dict[str, Any]], str, str]:
@@ -180,10 +205,11 @@ def extract_with_claude(
     raises (C2).
 
     The status distinguishes the ways a call can yield nothing — "the session held nothing
-    durable" (``empty``) reads identically to "the call broke" (``exit-N``/``timeout``/
-    ``error``/``unparsed``/``bad-json``) in the fact count alone, and each of those costs a
-    real model call, so the capture log records which one it was. ``detail`` is a one-line
-    head of stderr or the reply for the failures, so the next one is diagnosable.
+    durable" (``empty``) reads identically to "the call broke" (``exit-N``/``auth``/
+    ``timeout``/``error``/``unparsed``/``bad-json``) in the fact count alone, and each of
+    those costs a real model call, so the capture log records which one it was. ``detail``
+    is a one-line head of stderr or the reply for the failures, so the next one is
+    diagnosable.
     """
     if shutil.which("claude") is None:
         return [], "no-cli", ""
@@ -212,7 +238,9 @@ def extract_with_claude(
     except Exception as exc:
         return [], "error", _one_line(f"{type(exc).__name__}: {exc}")
     if int(proc.returncode) != 0:
-        return [], f"exit-{int(proc.returncode)}", _one_line(proc.stderr or proc.stdout)
+        output = f"{proc.stderr or ''}\n{proc.stdout or ''}"
+        status = "auth" if _is_auth_failure(output) else f"exit-{int(proc.returncode)}"
+        return [], status, _one_line(proc.stderr or proc.stdout)
     raw = str(proc.stdout or "")
     facts = parse_extraction(raw, config.capture.max_memories)
     if facts:
@@ -288,3 +316,93 @@ def run_capture(
         record["detail"] = detail
     _log_capture(config, record)
     return len(stored)
+
+
+# --------------------------------------------------------------------------------------------
+# capture health — capture.log read back by `status` and nightly `maintain`
+# --------------------------------------------------------------------------------------------
+@dataclass
+class CaptureHealth:
+    """What the capture.log tail says; all empty/zero when nothing has been logged."""
+
+    window_days: int
+    last_ts: str = ""  # newest record (file order — the log is append-only)
+    last_status: str = ""
+    recent: int = 0  # captures inside the window
+    failures: int = 0  # of those, status outside HEALTHY_STATUSES
+    last_failure_status: str = ""  # newest failure inside the window
+    last_failure_detail: str = ""
+
+    @property
+    def failing(self) -> bool:
+        """The newest capture failed — still broken. Failures followed by a success are history
+        (shown in the summary), not something to act on."""
+        return bool(self.last_status) and self.last_status not in HEALTHY_STATUSES
+
+    def summary(self) -> str:
+        if not self.last_ts:
+            return "no captures logged yet"
+        last = f"last {self.last_ts[:10]} {self.last_status}"
+        if not self.failures:
+            return f"{self.recent} ok in {self.window_days}d · {last}"
+        failure = self.last_failure_status
+        if self.last_failure_detail:
+            failure += f": {self.last_failure_detail}"
+        return (
+            f"{self.failures} of {self.recent} failed in {self.window_days}d · {last} · {failure}"
+        )
+
+
+def _tail_lines(path: Path) -> list[str]:
+    """The last ``_HEALTH_TAIL_LINES`` lines, reading at most ``_HEALTH_TAIL_BYTES``."""
+    with path.open("rb") as fh:
+        start = max(0, fh.seek(0, 2) - _HEALTH_TAIL_BYTES)
+        fh.seek(start)
+        lines = fh.read().decode("utf-8", errors="replace").splitlines()
+    if start:
+        lines = lines[1:]  # entered mid-record
+    return lines[-_HEALTH_TAIL_LINES:]
+
+
+def capture_health(config: Config, days: int = 7, now: datetime | None = None) -> CaptureHealth:
+    """Summarize the capture.log tail. Never raises: a missing or garbled log reads as empty.
+
+    Capture fails open by design (C2), so a broken extractor is otherwise invisible — a dead
+    `claude` login once failed every compaction until someone happened to open the log.
+    """
+    health = CaptureHealth(window_days=days)
+    try:
+        lines = _tail_lines(config.logs_dir / "capture.log")
+    except OSError:
+        return health
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=days)
+    for raw in lines:
+        try:
+            record = json.loads(raw)
+            ts = datetime.fromisoformat(str(record["ts"]))
+        except (ValueError, TypeError, KeyError):
+            continue  # malformed line — skip it, never fail the read
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        status = str(record.get("status", ""))
+        health.last_ts, health.last_status = str(record["ts"]), status
+        if ts < cutoff:
+            continue
+        health.recent += 1
+        # Lines from before statuses were logged carry none — unknown, not a failure.
+        if status and status not in HEALTHY_STATUSES:
+            health.failures += 1
+            health.last_failure_status = status
+            health.last_failure_detail = str(record.get("detail", ""))
+    return health
+
+
+def capture_remedy(status: str, config: Config) -> str:
+    """The concrete fix for a failing capture status (`status` fix column, maintain detail)."""
+    if status == "auth":
+        return "run `claude auth login` in a terminal"
+    if status == "timeout":
+        return f"raise capture.timeout_seconds (now {config.capture.timeout_seconds}s)"
+    if status == "no-cli":
+        return "install the claude CLI and put it on PATH"
+    return f"see {config.logs_dir / 'capture.log'}"
