@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 _MEMORY_HEADER = "# Long-term memory (auto-retrieved for this turn)"
 _PINNED_HEADER = "# Pinned facts"
+_HOOK_EMBED_TIMEOUT = 5.0  # seconds a vector backend's embedder may take on the prompt path
 
 
 def _read_stdin() -> dict[str, object]:
@@ -73,6 +74,12 @@ def _retrieve(prompt: str, config: Config) -> tuple[list[Hit], list[Hit]]:
     # LAZY import — this line must never execute on the Tier-1 skip path (I2).
     from sup_mem.backends import get_backend
 
+    if config.backend != "sqlite_fts":
+        from sup_mem.embedding import providers
+
+        # An HTTP embedder (Ollama, TEI, OpenAI) waited up to 60 s (+ retries) per prompt when
+        # cold or hung; past this bound the turn simply gets no memories (fail open, I2).
+        providers.configure_for_hook(_HOOK_EMBED_TIMEOUT)
     backend = get_backend(config)
     try:
         if not backend.hook_safe:

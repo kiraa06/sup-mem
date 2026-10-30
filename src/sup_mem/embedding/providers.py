@@ -27,6 +27,19 @@ if TYPE_CHECKING:
 
 _PROBE_TIMEOUT = 2.0
 _EMBED_TIMEOUT = 60.0
+# Effective per-request embed timeout / client retries. Generous by default (reindex, MCP
+# server); the per-prompt hook lowers both via ``configure_for_hook`` so a cold or hung
+# embedder costs one turn's memories, not up to a minute of the user's prompt.
+_embed_timeout = _EMBED_TIMEOUT
+_max_retries = 2  # the OpenAI client's own default
+
+
+def configure_for_hook(timeout: float) -> None:
+    """Bound embedding calls for the per-prompt hook (fail open past ``timeout``, no retry)."""
+    global _embed_timeout, _max_retries
+    _embed_timeout = timeout
+    _max_retries = 0
+
 
 # Known output dimensions so detection can show a table without constructing anything.
 _KNOWN_DIMS: dict[str, int] = {
@@ -53,7 +66,8 @@ def _http_get_json(url: str, timeout: float = _PROBE_TIMEOUT) -> Any:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _http_post_json(url: str, payload: dict[str, Any], timeout: float = _EMBED_TIMEOUT) -> Any:
+def _http_post_json(url: str, payload: dict[str, Any], timeout: float | None = None) -> Any:
+    timeout = _embed_timeout if timeout is None else timeout
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310
         url, data=data, headers={"Content-Type": "application/json"}, method="POST"
@@ -229,7 +243,7 @@ class OpenAIEmbedder(Embedder):
     def __init__(self, config: Config, model: str) -> None:
         from openai import OpenAI
 
-        self._client = OpenAI()
+        self._client = OpenAI(timeout=_embed_timeout, max_retries=_max_retries)
         self._model = model
         self._dim = _KNOWN_DIMS.get(model, 0)
 
