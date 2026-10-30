@@ -14,9 +14,11 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sup_mem.backends.base import MemoryBackend, ProgressCallback
+from sup_mem.backends.sqlite_fts import is_generic_source
 from sup_mem.embedding import get_embedder
 from sup_mem.embedding.base import (
     Embedder,
@@ -184,6 +186,21 @@ class QdrantBackend(MemoryBackend):
             self._collection,
             points=[self._qm.PointStruct(id=point_id, vector=vector, payload=payload)],
         )
+        if not is_generic_source(source):
+            # A specific source's new text replaces its predecessor (T3). This backend keeps
+            # only current versions (T6), so superseding = deleting the others — after the
+            # upsert, so a crash in between leaves two versions, never zero. Without this,
+            # every edit of a native memory file or re-capture added another live version.
+            qm = self._qm
+            self._client.delete(
+                self._collection,
+                points_selector=qm.FilterSelector(
+                    filter=qm.Filter(
+                        must=[qm.FieldCondition(key="source", match=qm.MatchValue(value=source))],
+                        must_not=[qm.HasIdCondition(has_id=[point_id])],
+                    )
+                ),
+            )
         return point_id
 
     # -- reads ----------------------------------------------------------------------------
@@ -302,6 +319,14 @@ class QdrantBackend(MemoryBackend):
         meta = embedder.meta
         points = list(self._iter_payloads())
         total = len(points)
+        stored = self._read_stored_meta()
+        if stored is None or stored.dim != meta.dim:
+            # A new dimension cannot be upserted into the old collection ("could not
+            # broadcast"), which made the I7 error's own advice — run reindex — a dead end.
+            # Rebuild it, after dumping every payload: this collection IS the store.
+            self._dump_payloads(points)
+            self._client.delete_collection(self._collection)
+            self._create_collection(meta.dim)
         for done, point in enumerate(points, 1):
             payload = point.payload or {}
             vector = embedder.embed_query(str(payload.get("text", "")))
@@ -312,6 +337,18 @@ class QdrantBackend(MemoryBackend):
             if progress is not None:
                 progress(done, total)
         self._write_meta(meta)  # store now matches the current model
+
+    def _dump_payloads(self, points: list[Any]) -> Path:
+        """JSONL of every memory payload under ``backups/`` before a destructive rebuild."""
+        import json
+
+        self._config.backups_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        path = self._config.backups_dir / f"qdrant-{self._collection}-{stamp}.jsonl"
+        with path.open("w", encoding="utf-8") as fh:
+            for point in points:
+                fh.write(json.dumps({"id": str(point.id), "payload": point.payload or {}}) + "\n")
+        return path
 
     def close(self) -> None:
         self._client.close()

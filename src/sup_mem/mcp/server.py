@@ -24,7 +24,10 @@ REMEMBER_DESCRIPTION = (
     "Store a durable fact, decision, preference, or correction that should persist across "
     "future sessions. Call when the user says things like 'remember that…', 'we decided…', "
     "'going forward, always…', or states a stable fact about their systems/preferences. "
-    "Do NOT call for transient, turn-specific details or things already obviously stored."
+    "Do NOT call for transient, turn-specific details or things already obviously stored. "
+    "Every call stores a new, independent memory: `source` is an optional provenance label "
+    "only — it never updates or replaces an earlier memory, so a correction must be stated "
+    "in full as its own fact."
 )
 
 RECALL_DESCRIPTION = (
@@ -48,7 +51,13 @@ class MemoryTools:
         text = text.strip()
         if not text:
             return "Nothing to store (empty text)."
-        metadata: Metadata = {"source": source or "mcp:remember"}
+        # ``source`` is model-supplied, so it is only ever a label: namespaced under ``mcp:`` it
+        # lands in a generic bucket the backend never supersedes on. A bare specific source
+        # (e.g. "user") made each new fact silently retire every live one with that label.
+        label = (source or "").strip()
+        if label and not label.startswith("mcp:"):
+            label = f"mcp:{label}"
+        metadata: Metadata = {"source": label or "mcp:remember"}
         if tags:
             metadata["tags"] = list(tags)
         mem_id = self._backend.store(text, metadata)
@@ -64,10 +73,16 @@ class MemoryTools:
                 instant = _parse_as_of(as_of)
             except SystemExit as exc:
                 return str(exc)
+        threshold = self._config.retrieval.threshold
         try:
-            hits = self._backend.search(
-                query, k=limit, threshold=self._config.retrieval.threshold, as_of=instant
-            )
+            if instant is None:
+                # Mirror the hook: rank an unthresholded pool by outcome evidence FIRST, then
+                # gate and cap. Gating first let chronic-ignore-demoted hits through and let
+                # quarantine return fewer than k.
+                pool_k = max(limit, self._config.ledger.pool_k)
+                hits = self._backend.search(query, k=pool_k, threshold=0.0)
+            else:
+                hits = self._backend.search(query, k=limit, threshold=threshold, as_of=instant)
         except ValueError as exc:  # backend without version history + as_of (T6)
             return str(exc)
         if instant is None:
@@ -77,6 +92,7 @@ class MemoryTools:
                 hits = adjust(hits, self._config)  # outcome boost + quarantine (fail-open, L2)
             except Exception:
                 pass
+            hits = [h for h in hits if h.score >= threshold][:limit]
         if not hits:
             when = f" as of {instant[:19]}" if instant else ""
             return f"No stored memories matched that query{when}."

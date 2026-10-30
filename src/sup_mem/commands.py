@@ -246,23 +246,25 @@ def cmd_tune(config: Config, *, apply: bool = False) -> int:
     )
 
     if apply:
-        # One combined write — two sequential render+writes would clobber the first.
-        retrieval_changes: dict[str, object] = {}
+        # One combined in-place edit of just these keys — the rest of the file (comments,
+        # other keys) is untouched and no env override is persisted.
+        retrieval_changes: dict[str, float] = {}
         if recommended != current:
             retrieval_changes["threshold"] = recommended
         if k_recommended != current_k:
             retrieval_changes["k"] = k_recommended
         if retrieval_changes:
-            from sup_mem.config import load_config, render_default_toml
+            from sup_mem.config import ConfigEditError, set_retrieval_keys
 
-            updated = load_config(
-                overrides={"data_dir": str(config.data_dir), "retrieval": retrieval_changes}
-            )
-            updated.config_path.write_text(render_default_toml(updated), encoding="utf-8")
+            try:
+                set_retrieval_keys(config.config_path, retrieval_changes)
+            except ConfigEditError as exc:
+                console.print(f"[red]✗[/] {exc}")
+                return 1
             written = ", ".join(
                 f"retrieval.{key} = {val}" for key, val in retrieval_changes.items()
             )
-            console.print(f"[green]✓[/] wrote {written} → {updated.config_path}")
+            console.print(f"[green]✓[/] wrote {written} → {config.config_path}")
         else:
             console.print("Current settings already match the recommendations — nothing written.")
     return 0
@@ -367,7 +369,9 @@ def _parse_as_of(raw: str) -> str:
         parsed = datetime.fromisoformat(value)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-        return parsed.isoformat()
+        # Stored timestamps are UTC ISO strings compared as text: a +05:30 instant must be
+        # converted, or "10:00+05:30" (04:30Z) would sort after a 06:00Z row.
+        return parsed.astimezone(UTC).isoformat()
     except ValueError as exc:
         raise SystemExit(f"invalid --as-of {raw!r}: use YYYY-MM-DD or an ISO timestamp") from exc
 
@@ -563,7 +567,12 @@ def cmd_maintain(config: Config) -> int:
     table.add_column("step")
     table.add_column("status")
     table.add_column("detail", overflow="fold")
-    icon = {"ok": "[green]ok[/]", "skipped": "[dim]skipped[/]", "failed": "[red]FAILED[/]"}
+    icon = {
+        "ok": "[green]ok[/]",
+        "skipped": "[dim]skipped[/]",
+        "warn": "[yellow]warn[/]",
+        "failed": "[red]FAILED[/]",
+    }
     for r in results:
         table.add_row(r.name, icon.get(r.status, r.status), r.detail)
     console.print(table)
@@ -572,6 +581,9 @@ def cmd_maintain(config: Config) -> int:
     if failed:
         console.print(f"[red]{len(failed)} step(s) failed[/]")
         return 1
+    warned = [r for r in results if r.status == "warn"]
+    if warned:  # not a failed run — the maintenance itself worked
+        console.print(f"[yellow]{len(warned)} warning(s): {', '.join(r.name for r in warned)}[/]")
     return 0
 
 
@@ -594,14 +606,17 @@ def cmd_status(
     table.add_column("detail", overflow="fold")
     table.add_column("fix", overflow="fold")
     for c in checks:
-        table.add_row(c.name, "[green]✓[/]" if c.ok else "[red]✗[/]", c.detail, c.fix)
+        mark = "[red]✗[/]" if not c.ok else "[yellow]![/]" if c.warn else "[green]✓[/]"
+        table.add_row(c.name, mark, c.detail, c.fix)
     console.print(table)
 
     bad = [c for c in checks if not c.ok]
     if bad:
         console.print(f"[red]{len(bad)} check(s) need attention[/]")
         return 1
-    console.print("[green]all wired[/]")
+    warned = [c for c in checks if c.warn]
+    note = f" [yellow]· {len(warned)} warning(s) — see fix column[/]" if warned else ""
+    console.print(f"[green]all wired[/]{note}")
     return 0
 
 
@@ -672,9 +687,12 @@ def cmd_init(
     from sup_mem.backends import get_backend
     from sup_mem.clients import CLIENTS, detect_installed, get_client
     from sup_mem.config import render_default_toml
+    from sup_mem.registration import RegistrationError
 
     console = Console()
-    config.data_dir.mkdir(parents=True, exist_ok=True)
+    # Owner-only: the store + retrieval log hold prompt text and memories. Only applies when
+    # we create the dir — an existing one keeps whatever mode its owner chose.
+    config.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not config.config_path.exists():
         config.config_path.write_text(render_default_toml(config), encoding="utf-8")
     if not config.pinned_facts_path.exists():
@@ -697,9 +715,15 @@ def cmd_init(
 
     console.print(f"[green]✓[/] sup-mem ready (SQLite FTS) — {config.data_dir}")
     console.print(f"  pinned facts: {config.pinned_facts_path}")
+    registered: list[str] = []
     for name in selected:
-        report = get_client(name).register(config, **overrides.get(name, {}))
         console.print(f"[bold]{name}[/]")
+        try:
+            report = get_client(name).register(config, **overrides.get(name, {}))
+        except RegistrationError as exc:  # unparseable config: nothing written for this host
+            console.print(f"  [red]✗ not registered:[/] {exc}")
+            continue
+        registered.append(name)
         console.print(
             f"  hooks      → {report['settings_path']} "
             f"({'updated' if report['hooks_changed'] else 'already registered'})"
@@ -708,13 +732,18 @@ def cmd_init(
             f"  MCP server → {report['mcp_target']} "
             f"({'updated' if report['mcp_changed'] else 'already registered'})"
         )
-    restart = ", ".join(selected)
-    console.print(f"[yellow]Restart {restart}[/] to load the hook + MCP server.")
-    return 0
+        for warning in report.get("warnings", []):
+            console.print(f"  [yellow]![/] {warning}")
+    if registered:
+        restart = ", ".join(registered)
+        console.print(f"[yellow]Restart {restart}[/] to load the hook + MCP server.")
+    return 0 if len(registered) == len(selected) else 1
 
 
 def _compose_up(console: Console) -> None:
     """Best-effort: bring up the Qdrant service. Warns and continues on any problem."""
+    import contextlib
+    import os
     import shutil
     import subprocess
     import tempfile
@@ -722,13 +751,15 @@ def _compose_up(console: Console) -> None:
     if shutil.which("docker") is None:
         console.print("[yellow]![/] docker not found — start Qdrant yourself, then re-run setup.")
         return
-    compose_file = Path.cwd() / "docker-compose.qdrant.yml"
-    if not compose_file.exists():
-        compose_file = Path(tempfile.gettempdir()) / "sup-mem-docker-compose.qdrant.yml"
-        compose_file.write_text(_COMPOSE_YAML, encoding="utf-8")
+    # Always OUR compose content, in a fresh private file (mkstemp: O_EXCL, 0600). Picking up
+    # ./docker-compose.qdrant.yml from the CWD, or reusing a fixed shared temp path, ran
+    # whatever compose file another user/directory had left there.
+    fd, compose_file = tempfile.mkstemp(prefix="sup-mem-qdrant-", suffix=".yml")
     try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(_COMPOSE_YAML)
         subprocess.run(
-            ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+            ["docker", "compose", "-f", compose_file, "up", "-d"],
             check=True,
             capture_output=True,
             text=True,
@@ -740,6 +771,9 @@ def _compose_up(console: Console) -> None:
             f"[yellow]![/] could not start Qdrant automatically ({exc}); "
             "start it yourself and re-run setup."
         )
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(compose_file)
 
 
 def cmd_setup(
@@ -765,9 +799,9 @@ def cmd_setup(
     from sup_mem.config import load_config, render_default_toml
     from sup_mem.embedding.base import EmbeddingError
     from sup_mem.embedding.detect import detect_embedding_provider
-    from sup_mem.registration import register_into_claude_code
+    from sup_mem.registration import RegistrationError, register_into_claude_code
 
-    config.data_dir.mkdir(parents=True, exist_ok=True)
+    config.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # owner-only, as in init
     _compose_up(console)
     try:
         selection = detect_embedding_provider(config, assume_yes=assume_yes, log=console.print)
@@ -797,13 +831,19 @@ def cmd_setup(
     finally:
         backend.close()
 
-    report = register_into_claude_code(
-        merged, claude_dir=claude_dir, claude_json=claude_json, use_cli=use_cli
-    )
+    try:
+        report = register_into_claude_code(
+            merged, claude_dir=claude_dir, claude_json=claude_json, use_cli=use_cli
+        )
+    except RegistrationError as exc:
+        console.print(f"[red]✗ Claude Code not registered:[/] {exc}")
+        return 1
     console.print(f"[green]✓[/] sup-mem set up (Qdrant @ {merged.qdrant.url})")
     console.print(
         f"  hooks      → {report['settings_path']} "
         f"({'updated' if report['hooks_changed'] else 'already registered'})"
     )
+    for warning in report.get("warnings", []):
+        console.print(f"  [yellow]![/] {warning}")
     console.print("[yellow]Restart Claude Code[/] to load the hook + MCP server.")
     return 0

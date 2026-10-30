@@ -10,6 +10,7 @@ with a detail string and never aborts the run. Steps:
   manifest  — refresh the session-start manifest cache
   vacuum    — compact the live databases
   health    — backend health + I7 consistency; failures trigger a macOS notification
+  capture-health — recent PreCompact capture failures from capture.log (``warn``, with the fix)
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 @dataclass
 class StepResult:
     name: str
-    status: str  # "ok" | "skipped" | "failed"
+    status: str  # "ok" | "skipped" | "warn" (needs a look; the run still succeeded) | "failed"
     detail: str
 
 
@@ -70,6 +71,7 @@ def rotate_log(config: Config) -> StepResult:
 
     tmp = path.with_suffix(".jsonl.tmp")
     tmp.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    shutil.copymode(path, tmp)  # the log holds prompt text — keep its (0600) mode on rotate
     tmp.replace(path)
 
     if config.ledger_db_path.exists():
@@ -102,7 +104,9 @@ def _store_fingerprint(config: Config) -> str:
 
 
 def backup_stores(config: Config) -> StepResult:
-    targets = [p for p in (config.db_path, config.ledger_db_path) if p.exists()]
+    # archive.db included: archived versions exist nowhere else once older snapshots age out.
+    stores = (config.db_path, config.ledger_db_path, config.archive_db_path)
+    targets = [p for p in stores if p.exists()]
     if not targets:
         return _result("backup", "skipped", "no local databases to back up")
     config.backups_dir.mkdir(parents=True, exist_ok=True)
@@ -166,6 +170,25 @@ def prune_candidates(config: Config) -> StepResult:
         conn.close()
 
 
+def repair_ledger(config: Config) -> StepResult:
+    """One-time: back out pre-0.9.4 attributions made without a located prompt (they were
+    judged against the whole session and ~91% came out "referenced"). Idempotent — a ledger
+    meta flag makes every later run a no-op. Runs after backup, before auto-tune."""
+    if not config.ledger_db_path.exists():
+        return _result("ledger-repair", "skipped", "no ledger yet")
+    from sup_mem.ledger import Ledger
+
+    with Ledger(config.ledger_db_path) as ledger:
+        repaired = ledger.repair_unlocated()
+        trimmed = ledger.trim_candidate_queries()
+    notes = []
+    if repaired:
+        notes.append(f"{repaired} unlocated attributions → unknown")
+    if trimmed:
+        notes.append(f"prompt copies trimmed from {trimmed} pool rows")
+    return _result("ledger-repair", "ok", "; ".join(notes) or "nothing to repair")
+
+
 # --------------------------------------------------------------------------------------------
 # sweep — migrate-native stragglers
 # --------------------------------------------------------------------------------------------
@@ -220,7 +243,7 @@ def auto_tune(config: Config) -> StepResult:
     recommended = recommend_threshold(replay_thresholds(turns, current_k, current), current)
     k_recommended = recommend_k(replay_k(turns, current, current_k), current_k)
 
-    changes: dict[str, object] = {}
+    changes: dict[str, float] = {}
     notes: list[str] = []
     if recommended != round(current, 2):
         changes["threshold"] = recommended
@@ -231,11 +254,14 @@ def auto_tune(config: Config) -> StepResult:
     if not changes:
         return _result("auto-tune", "ok", f"threshold {current}, k {current_k} already optimal")
 
-    from sup_mem.config import load_config, render_default_toml
+    from sup_mem.config import ConfigEditError, set_retrieval_keys
 
-    # One combined write — both knobs land in a single render (a second write would clobber).
-    updated = load_config(overrides={"data_dir": str(config.data_dir), "retrieval": changes})
-    updated.config_path.write_text(render_default_toml(updated), encoding="utf-8")
+    # One in-place edit of just these keys — unattended, so it must never re-render the file
+    # (dropping comments/keys, persisting env overrides) or overwrite one it cannot parse.
+    try:
+        set_retrieval_keys(config.config_path, changes)
+    except ConfigEditError as exc:
+        return _result("auto-tune", "failed", str(exc))
     return _result("auto-tune", "ok", f"{'; '.join(notes)} (lossless, applied)")
 
 
@@ -327,6 +353,29 @@ def check_health(config: Config) -> StepResult:
     return _result("health", "ok", f"{health.get('backend')}: {health.get('count')} memories")
 
 
+def check_capture_health(config: Config) -> StepResult:
+    """Recent PreCompact capture failures, so a dead `claude` login lands in maintain.log.
+
+    ``warn``, not ``failed``: the maintenance itself worked, and a failed run would hold back
+    the `last-maintain` stamp. Never raises.
+    """
+    if not config.capture.enabled:
+        return _result("capture-health", "skipped", "disabled in config")
+    try:
+        from sup_mem.capture import capture_health, capture_remedy
+
+        health = capture_health(config)
+        if not health.last_ts:
+            return _result("capture-health", "skipped", health.summary())
+        if health.failing:
+            fix = capture_remedy(health.last_status, config)
+            # fix first: notifications truncate the detail
+            return _result("capture-health", "warn", f"fix: {fix} · {health.summary()}")
+        return _result("capture-health", "ok", health.summary())
+    except Exception as exc:
+        return _result("capture-health", "warn", f"could not read capture.log: {exc}")
+
+
 def notify_user(title: str, message: str) -> None:
     """Best-effort desktop notification (macOS osascript / Linux notify-send); never raises."""
     with contextlib.suppress(Exception):
@@ -345,6 +394,7 @@ def notify_user(title: str, message: str) -> None:
 _STEPS = [
     rotate_log,
     backup_stores,  # pre-archival state is always in the latest snapshot
+    repair_ledger,  # after backup (the pre-repair ledger is in the snapshot), before tune
     sweep_native,
     auto_tune,
     run_archival_step,
@@ -353,6 +403,7 @@ _STEPS = [
     vacuum_stores,
     check_provenance,
     check_health,
+    check_capture_health,
 ]
 
 
@@ -373,6 +424,12 @@ def run_maintenance(config: Config) -> list[StepResult]:
     elif config.maintenance.notify:
         summary = "; ".join(f"{r.name}: {r.detail[:80]}" for r in failures)
         notify_user("sup-mem maintain", f"{len(failures)} step(s) failed — {summary}")
+    # A warning (e.g. a dead `claude` login failing every capture) is only useful if seen —
+    # maintain.log is not. Notify for it too, without failing the run.
+    warnings = [r for r in results if r.status == "warn"]
+    if warnings and config.maintenance.notify:
+        summary = "; ".join(f"{r.name}: {r.detail[:120]}" for r in warnings)
+        notify_user("sup-mem maintain", f"needs a look — {summary}")
     return results
 
 

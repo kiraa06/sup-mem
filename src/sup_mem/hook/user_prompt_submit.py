@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 _MEMORY_HEADER = "# Long-term memory (auto-retrieved for this turn)"
 _PINNED_HEADER = "# Pinned facts"
+_HOOK_EMBED_TIMEOUT = 5.0  # seconds a vector backend's embedder may take on the prompt path
 
 
 def _read_stdin() -> dict[str, object]:
@@ -48,7 +49,7 @@ def _read_pinned(config: Config) -> str:
     so an untouched template (all notes) must cost nothing, not ~86 tokens per turn."""
     try:
         text = config.pinned_facts_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):  # ValueError: a non-UTF-8 file (UnicodeDecodeError)
         return ""
     lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
     return "\n".join(lines).strip()
@@ -73,6 +74,12 @@ def _retrieve(prompt: str, config: Config) -> tuple[list[Hit], list[Hit]]:
     # LAZY import — this line must never execute on the Tier-1 skip path (I2).
     from sup_mem.backends import get_backend
 
+    if config.backend != "sqlite_fts":
+        from sup_mem.embedding import providers
+
+        # An HTTP embedder (Ollama, TEI, OpenAI) waited up to 60 s (+ retries) per prompt when
+        # cold or hung; past this bound the turn simply gets no memories (fail open, I2).
+        providers.configure_for_hook(_HOOK_EMBED_TIMEOUT)
     backend = get_backend(config)
     try:
         if not backend.hook_safe:
@@ -128,6 +135,7 @@ def _log(
     if not config.logging.retrieval_log:
         return
     with contextlib.suppress(Exception):
+        import os
         from datetime import UTC, datetime
 
         injected_ids = {h.id for h in hits}
@@ -151,8 +159,13 @@ def _log(
                 for h in (pool if pool is not None else hits)
             ],
         }
-        config.data_dir.mkdir(parents=True, exist_ok=True)
-        with config.retrieval_log_path.open("a", encoding="utf-8") as fh:
+        config.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # The log holds each prompt's head: created 0600. The mode applies only on creation,
+        # so an existing log keeps its own and the hot path pays no extra syscall.
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        with os.fdopen(
+            os.open(config.retrieval_log_path, flags, 0o600), "a", encoding="utf-8"
+        ) as fh:
             fh.write(json.dumps(record) + "\n")
 
 
@@ -162,6 +175,15 @@ def _emit(parts: list[str]) -> None:
 
 
 def main() -> int:
+    """Always exit 0 (I2): any unforeseen error becomes "no injection this turn", never a
+    traceback on every prompt — a non-UTF-8 pinned.md once did exactly that."""
+    try:
+        return _main()
+    except Exception:
+        return 0
+
+
+def _main() -> int:
     import os
 
     if os.environ.get("SUP_MEM_CAPTURE"):

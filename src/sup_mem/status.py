@@ -23,6 +23,8 @@ class Check:
     ok: bool
     detail: str
     fix: str = ""
+    # Passes the wiring verdict but needs a look (rendered `!`, never fails `status`).
+    warn: bool = False
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -46,7 +48,13 @@ def _hook_commands(settings: dict[str, Any], event: str) -> list[str]:
 def collect_checks(
     config: Config, *, claude_dir: Path | None = None, claude_json: Path | None = None
 ) -> list[Check]:
-    from sup_mem.registration import CLAUDE_EVENTS, MCP_SERVER_NAME, SCRIPTS, claude_config_dir
+    from sup_mem.registration import (
+        CLAUDE_EVENTS,
+        MCP_SERVER_NAME,
+        SCRIPTS,
+        claude_config_dir,
+        command_executable,
+    )
 
     checks: list[Check] = []
     directory = claude_config_dir(claude_dir)
@@ -60,7 +68,7 @@ def collect_checks(
         if not commands:
             checks.append(Check(f"hook:{event}", False, "not registered", "run: sup-mem init"))
             continue
-        binary = commands[0]
+        binary = command_executable(commands[0]) or commands[0]  # undo shell quoting
         exists = Path(binary).exists() if "/" in binary else shutil.which(binary) is not None
         checks.append(
             Check(
@@ -202,5 +210,23 @@ def collect_checks(
         checks.append(Check("last-maintain", True, stamp.read_text().strip()[:19]))
     else:
         checks.append(Check("last-maintain", True, "never (runs on schedule or manually)"))
+
+    # 9) PreCompact capture health — fails open by design, so read its log back here.
+    # Advisory like last-maintain: a warning with the fix, never a red wiring line.
+    if not config.capture.enabled:
+        checks.append(Check("capture", True, "disabled in config ([capture] enabled=false)"))
+    else:
+        from sup_mem.capture import capture_health, capture_remedy
+
+        cap = capture_health(config)
+        checks.append(
+            Check(
+                "capture",
+                True,
+                cap.summary(),
+                capture_remedy(cap.last_status, config) if cap.failing else "",
+                warn=cap.failing,
+            )
+        )
 
     return checks

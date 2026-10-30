@@ -96,6 +96,18 @@ def test_generic_source_never_supersedes(config: Config) -> None:
         backend.close()
 
 
+def test_any_mcp_prefixed_source_is_a_generic_bucket(config: Config) -> None:
+    # Model-labelled MCP sources (mcp:<label>) are buckets: a new text never retires another.
+    backend = get_backend(config)
+    try:
+        a = backend.store("fact one about deployments", {"source": "mcp:user"})
+        b = backend.store("fact two about deployments", {"source": "mcp:user"})
+        live_ids = {h.id for h in backend.search("deployments", k=5, threshold=0.0)}
+        assert {a, b} <= live_ids
+    finally:
+        backend.close()
+
+
 def test_exact_restore_revives(config: Config, versioned: dict[str, str]) -> None:
     backend = get_backend(config)
     try:

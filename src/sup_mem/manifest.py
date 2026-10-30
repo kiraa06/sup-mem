@@ -41,7 +41,7 @@ def _read_cache(config: Config) -> dict[str, Any] | None:
 
 def _write_cache(config: Config, revision: str, text: str) -> None:
     with contextlib.suppress(OSError):
-        config.data_dir.mkdir(parents=True, exist_ok=True)
+        config.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         with config.manifest_cache_path.open("w", encoding="utf-8") as fh:
             json.dump({"revision": revision, "text": text}, fh)
 
