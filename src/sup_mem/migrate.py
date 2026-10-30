@@ -120,6 +120,10 @@ def migrate_native(
         if not memory.text:
             skipped.append(memory.source)
             continue
+        if backend.is_archived(memory.text, memory.source):
+            # Archival retired this exact version; re-storing it would revive it as live
+            # every night (archive → sweep → archive churn). `sup-mem restore` brings it back.
+            continue
         if not dry_run:
             backend.store(memory.text, memory.metadata)
         migrated.append((memory.source, memory.kind, len(memory.text)))
