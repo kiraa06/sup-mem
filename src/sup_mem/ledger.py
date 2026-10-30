@@ -6,6 +6,8 @@ Records every retrieval candidate the hook logs, then (from the Stop hook) attri
   referenced   — the assistant's response used the memory's distinctive tokens
   ignored      — injected but never referenced
   contradicted — referenced, then corrected by the user in the very next turn
+  unknown      — the prompt that triggered the injection is not in the transcript (e.g. a
+                 host-delivered notification), so there is no response to judge (L4)
 
 Everything here is advisory and fail-open (L2): stdlib sqlite3 in its own file
 (``~/.sup-mem/ledger.db``), independent of the memory backend (L5). Attribution runs only in
@@ -20,7 +22,7 @@ import re
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +30,9 @@ if TYPE_CHECKING:
     from sup_mem.config import Config
 
 _MAX_TRANSCRIPT_BYTES = 20_000_000  # cap: parse at most the last 20 MB of a huge transcript
+_PROMPT_MATCH_CHARS = 80  # normalized query head searched for inside user turns
+_PROMPT_MAX_SKEW_S = 120.0  # a text match further than this from the log ts is another turn
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _TOKEN_CAP = 48  # distinctive tokens kept per memory
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 _STOPWORD_TEXT = (
@@ -42,6 +47,27 @@ _STOPWORDS = frozenset(_STOPWORD_TEXT.split())
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _parse_ts(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _turn_key(ts: str, line_no: int) -> int:
+    """Idempotency key for one logged turn: its ts in epoch microseconds.
+
+    Stable across retrieval-log rotation, unlike the file line index — rotation renumbers
+    lines, and a post-rotation line reusing an old index used to be silently dropped by
+    ``INSERT OR IGNORE``. Records without a usable ts fall back to the line index.
+    """
+    parsed = _parse_ts(ts)
+    if parsed is None:
+        return line_no
+    return (parsed - _EPOCH) // timedelta(microseconds=1)
 
 
 def estimate_tokens(text: str) -> int:
@@ -69,6 +95,10 @@ class Turn:
     index: int
     role: str  # "user" | "assistant"
     text: str
+    ts: str = ""  # host timestamp, when the transcript carries one
+    # User turns only: "" = a real prompt; "meta" = a host-wrapped entry (isMeta); "summary" =
+    # a compaction summary. Neither of the latter two is the user reacting to a response.
+    kind: str = ""
 
 
 def _block_text(content: Any) -> str:
@@ -85,8 +115,9 @@ def _block_text(content: Any) -> str:
 
 
 def parse_transcript(path: Path) -> list[Turn]:
-    """Ordered main-chain user/assistant turns. Sidechains (subagents) are skipped; user
-    entries whose content is a block list (tool results) are not real prompts and are skipped."""
+    """Ordered main-chain user/assistant turns. Sidechains (subagents) and tool results (user
+    entries carrying ``tool_result`` blocks) are skipped; prompts sent as text blocks (e.g.
+    with an image) are kept, and host-wrapped / compaction entries are marked by ``kind``."""
     turns: list[Turn] = []
     try:
         size = path.stat().st_size
@@ -108,11 +139,25 @@ def parse_transcript(path: Path) -> list[Turn]:
                 if not isinstance(message, dict):
                     continue
                 content = message.get("content")
-                if etype == "user" and not isinstance(content, str):
-                    continue  # tool results ride in user-role entries with block lists
+                kind = ""
+                if etype == "user":
+                    if isinstance(content, list):
+                        if any(
+                            isinstance(block, dict) and block.get("type") == "tool_result"
+                            for block in content
+                        ):
+                            continue  # tool results ride in user-role entries
+                    elif not isinstance(content, str):
+                        continue
+                    if entry.get("isCompactSummary"):
+                        kind = "summary"
+                    elif entry.get("isMeta"):
+                        kind = "meta"
                 text = _block_text(content)
                 if text.strip():
-                    turns.append(Turn(len(turns), etype, text))
+                    turns.append(
+                        Turn(len(turns), etype, text, ts=str(entry.get("timestamp", "")), kind=kind)
+                    )
     except OSError:
         return []
     return turns
@@ -125,8 +170,11 @@ def parse_transcript(path: Path) -> list[Turn]:
 CandidateTurn = list[dict[str, Any]]
 
 
+_JUDGED = ("referenced", "ignored", "contradicted")
+
+
 def attributed_count(turns: list[CandidateTurn]) -> int:
-    return sum(1 for turn in turns for c in turn if c["injected"] and c["outcome"])
+    return sum(1 for turn in turns for c in turn if c["injected"] and c["outcome"] in _JUDGED)
 
 
 def _replay_one(turns: list[CandidateTurn], theta: float, k: int) -> dict[str, float]:
@@ -199,15 +247,56 @@ def recommend_k(rows: list[dict[str, float]], current_k: int) -> int:
     return int(min(keepers, key=lambda r: r["k"])["k"]) if keepers else current_k
 
 
-def _find_prompt_turn(turns: list[Turn], query: str) -> int:
-    """Index of the user turn carrying this logged query (prefix match); -1 if not found."""
-    needle = " ".join(query.split())[:200]
+def _normalized(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _find_prompt_turn(turns: list[Turn], query: str, ts: str = "") -> int:
+    """Index of the user turn that carried this logged query; -1 if it cannot be located.
+
+    A substring match, not a prefix one: hosts wrap prompts (isMeta envelopes, image + text
+    blocks). When the same text recurs ("continue"), the occurrence nearest the log ts wins,
+    and a nearest match more than ``_PROMPT_MAX_SKEW_S`` away is another turn → -1. Without
+    timestamps (some hosts), the most recent occurrence wins. Not finding the prompt is
+    reported honestly as -1: the caller must not attribute against the whole session.
+    """
+    needle = _normalized(query)[:_PROMPT_MATCH_CHARS]
     if not needle:
         return -1
-    for turn in turns:
-        if turn.role == "user" and " ".join(turn.text.split())[:200].startswith(needle):
-            return turn.index
-    return -1
+    hits = [
+        t
+        for t in turns
+        if t.role == "user" and t.kind != "summary" and needle in _normalized(t.text)
+    ]
+    if not hits:
+        return -1
+    logged = _parse_ts(ts)
+    if logged is not None:
+        timed = [
+            (abs((when - logged).total_seconds()), t)
+            for t in hits
+            if (when := _parse_ts(t.ts)) is not None
+        ]
+        if timed:
+            skew, best = min(timed, key=lambda pair: pair[0])
+            return best.index if skew <= _PROMPT_MAX_SKEW_S else -1
+    return hits[-1].index
+
+
+def _response(turns: list[Turn], prompt_turn: int) -> list[Turn]:
+    """The assistant turns answering ``prompt_turn``: up to the next real user prompt."""
+    out: list[Turn] = []
+    for turn in turns[prompt_turn + 1 :]:
+        if turn.role == "user" and not turn.kind:
+            break
+        if turn.role == "assistant":
+            out.append(turn)
+    return out
+
+
+def _next_prompt(turns: list[Turn], prompt_turn: int) -> Turn | None:
+    """The user's next real prompt after ``prompt_turn`` — never a summary or host wrapper."""
+    return next((t for t in turns[prompt_turn + 1 :] if t.role == "user" and not t.kind), None)
 
 
 # --------------------------------------------------------------------------------------------
@@ -217,14 +306,14 @@ def _find_prompt_turn(turns: list[Turn], query: str) -> int:
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS candidates (
     session_id  TEXT NOT NULL,
-    line_no     INTEGER NOT NULL,           -- retrieval.jsonl line index (global, 0-based)
+    line_no     INTEGER NOT NULL,           -- turn key: record ts in epoch µs (legacy: line index)
     memory_id   TEXT NOT NULL,
     query       TEXT NOT NULL DEFAULT '',
     score       REAL NOT NULL DEFAULT 0,
     injected    INTEGER NOT NULL DEFAULT 0,
     tokens      INTEGER NOT NULL DEFAULT 0,
     ts          TEXT NOT NULL DEFAULT '',
-    outcome     TEXT NOT NULL DEFAULT '',   -- '', referenced, ignored, contradicted
+    outcome     TEXT NOT NULL DEFAULT '',   -- '', referenced, ignored, contradicted, unknown
     prompt_turn INTEGER NOT NULL DEFAULT -1,
     contra_done INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (session_id, line_no, memory_id)
@@ -246,16 +335,25 @@ CREATE TABLE IF NOT EXISTS stats (
     last_injected   TEXT NOT NULL DEFAULT '',
     last_referenced TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
 """
 
 
 class Ledger:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, timeout: float = 5.0) -> None:
+        """``timeout`` bounds lock waits; the per-prompt ranking read passes a short one so a
+        concurrent Stop-hook write can never stall the user's turn (L1/L2)."""
         path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._conn = sqlite3.connect(str(path), timeout=timeout, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         with self._conn:
+            # WAL: the hot-path read never waits behind the Stop hook's attribution write.
+            self._conn.execute("PRAGMA journal_mode = WAL")
             self._conn.executescript(_SCHEMA)
 
     # -- reads used on the hot path (one indexed lookup, L1) -------------------------------
@@ -286,9 +384,8 @@ class Ledger:
         """After retrieval-log rotation, shift each session cursor down by the number of
         dropped line indexes below it, so cursors keep matching the rewritten file.
 
-        (Old ``candidates.line_no`` values keep their pre-rotation numbering — they are only
-        an idempotency key, never re-read from the file; a collision would need one session
-        to span a rotation by 80+ turns, and costs at most one skipped advisory row.)
+        (``candidates.line_no`` is keyed on each record's ts, not its line index, so rotation
+        cannot make a new turn collide with an old one.)
         """
         if not dropped_lines:
             return
@@ -348,13 +445,13 @@ class Ledger:
                         )
                     except (TypeError, ValueError, IndexError):
                         continue
-                    self._conn.execute(
+                    cur = self._conn.execute(
                         "INSERT OR IGNORE INTO candidates "
                         "(session_id, line_no, memory_id, query, score, injected, tokens, ts) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             session_id,
-                            line_no,
+                            _turn_key(str(record.get("ts", "")), line_no),
                             mem_id,
                             str(record.get("query", "")),
                             score,
@@ -363,7 +460,7 @@ class Ledger:
                             str(record.get("ts", "")),
                         ),
                     )
-                    added += 1
+                    added += cur.rowcount
             self._conn.execute(
                 "INSERT INTO cursors (session_id, log_line) VALUES (?, ?) "
                 "ON CONFLICT(session_id) DO UPDATE SET log_line = excluded.log_line",
@@ -393,24 +490,37 @@ class Ledger:
         self, session_id: str, turns: list[Turn], texts: dict[str, str], config: Config
     ) -> dict[str, int]:
         """Attribute this session's pending injected candidates against the transcript."""
-        report = {"referenced": 0, "ignored": 0, "contradicted": 0}
+        report = {"referenced": 0, "ignored": 0, "contradicted": 0, "unknown": 0}
         now = _now_iso()
         led = config.ledger
 
         with self._lock, self._conn:
-            # 1) fresh injections → referenced | ignored
+            # 1) fresh injections → referenced | ignored (| unknown when the prompt is absent)
             pending = self._conn.execute(
                 "SELECT rowid, * FROM candidates "
                 "WHERE session_id = ? AND injected = 1 AND outcome = ''",
                 (session_id,),
             ).fetchall()
+            located: dict[tuple[str, str], int] = {}
             for row in pending:
+                key = (str(row["query"]), str(row["ts"]))
+                if key not in located:
+                    located[key] = _find_prompt_turn(turns, *key)
+                prompt_turn = located[key]
+                if prompt_turn < 0:
+                    # No prompt, no response to judge. Attributing against the whole session
+                    # instead marked ~91% of these "referenced" and fed the boost loop.
+                    self._conn.execute(
+                        "UPDATE candidates SET outcome = 'unknown', prompt_turn = -1, "
+                        "contra_done = 1 WHERE rowid = ?",
+                        (row["rowid"],),
+                    )
+                    report["unknown"] += 1
+                    continue
                 text = texts.get(row["memory_id"], "")
                 tokens = distinctive_tokens(text) if text else set()
-                prompt_turn = _find_prompt_turn(turns, row["query"])
-                after = [t for t in turns if t.role == "assistant" and t.index > prompt_turn]
-                assistant_blob = " ".join(t.text for t in after).lower()
-                assistant_tokens = set(_WORD_RE.findall(assistant_blob))
+                response = " ".join(t.text for t in _response(turns, prompt_turn)).lower()
+                assistant_tokens = set(_WORD_RE.findall(response))
                 needed = max(led.min_overlap_tokens, math.ceil(led.overlap_fraction * len(tokens)))
                 outcome = (
                     "referenced"
@@ -425,7 +535,7 @@ class Ledger:
                 self._bump(row["memory_id"], outcome, ts=now)
                 report[outcome] += 1
 
-            # 2) retroactive contradiction check: referenced + a later user turn exists
+            # 2) retroactive contradiction check: referenced + the user's next prompt exists
             patterns = [re.compile(p, re.IGNORECASE) for p in led.correction_patterns]
             referenced = self._conn.execute(
                 "SELECT rowid, * FROM candidates "
@@ -433,16 +543,15 @@ class Ledger:
                 (session_id,),
             ).fetchall()
             for row in referenced:
-                next_user = next(
-                    (
-                        t
-                        for t in turns
-                        if t.role == "user" and t.index > max(int(row["prompt_turn"]), -1) + 1
-                    ),
-                    None,
-                )
+                prompt_turn = int(row["prompt_turn"])
+                if prompt_turn < 0:  # legacy row with no located prompt: nothing to anchor to
+                    self._conn.execute(
+                        "UPDATE candidates SET contra_done = 1 WHERE rowid = ?", (row["rowid"],)
+                    )
+                    continue
+                next_user = _next_prompt(turns, prompt_turn)
                 if next_user is None:
-                    continue  # no later user turn yet — re-check on a future Stop
+                    continue  # no later prompt yet — re-check on a future Stop
                 if any(p.search(next_user.text) for p in patterns):
                     self._conn.execute(
                         "UPDATE candidates SET outcome = 'contradicted', contra_done = 1 "
@@ -460,6 +569,42 @@ class Ledger:
                         "UPDATE candidates SET contra_done = 1 WHERE rowid = ?", (row["rowid"],)
                     )
         return report
+
+    def repair_unlocated(self) -> int:
+        """One-time repair (ledger meta ``repair_unlocated_v1``): back out of ``stats`` every
+        attribution made without a located prompt (``prompt_turn = -1``) and mark those rows
+        ``unknown``. Before 0.9.4 such rows were judged against the WHOLE session, which made
+        ~91% of them "referenced" and inflated the boosts of long, generic memories.
+
+        Only rows still in the candidates window can be backed out; returns how many were.
+        """
+        with self._lock, self._conn:
+            if self._conn.execute(
+                "SELECT 1 FROM meta WHERE key = 'repair_unlocated_v1'"
+            ).fetchone():
+                return 0
+            rows = self._conn.execute(
+                "SELECT rowid, memory_id, outcome, tokens FROM candidates "
+                "WHERE injected = 1 AND prompt_turn = -1 "
+                "AND outcome IN ('referenced', 'ignored', 'contradicted')"
+            ).fetchall()
+            for row in rows:
+                column = str(row["outcome"])  # a contradiction already moved referenced → it
+                self._conn.execute(
+                    f"UPDATE stats SET injected = MAX(injected - 1, 0), "
+                    f"{column} = MAX({column} - 1, 0), tokens = MAX(tokens - ?, 0) "
+                    "WHERE memory_id = ?",
+                    (int(row["tokens"]), row["memory_id"]),
+                )
+                self._conn.execute(
+                    "UPDATE candidates SET outcome = 'unknown', contra_done = 1 WHERE rowid = ?",
+                    (row["rowid"],),
+                )
+            self._conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('repair_unlocated_v1', ?)",
+                (f"{len(rows)} @ {_now_iso()}",),
+            )
+        return len(rows)
 
     def close(self) -> None:
         self._conn.close()

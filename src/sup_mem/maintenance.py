@@ -166,6 +166,21 @@ def prune_candidates(config: Config) -> StepResult:
         conn.close()
 
 
+def repair_ledger(config: Config) -> StepResult:
+    """One-time: back out pre-0.9.4 attributions made without a located prompt (they were
+    judged against the whole session and ~91% came out "referenced"). Idempotent — a ledger
+    meta flag makes every later run a no-op. Runs after backup, before auto-tune."""
+    if not config.ledger_db_path.exists():
+        return _result("ledger-repair", "skipped", "no ledger yet")
+    from sup_mem.ledger import Ledger
+
+    with Ledger(config.ledger_db_path) as ledger:
+        repaired = ledger.repair_unlocated()
+    if not repaired:
+        return _result("ledger-repair", "ok", "nothing to repair")
+    return _result("ledger-repair", "ok", f"{repaired} unlocated attributions → unknown")
+
+
 # --------------------------------------------------------------------------------------------
 # sweep — migrate-native stragglers
 # --------------------------------------------------------------------------------------------
@@ -345,6 +360,7 @@ def notify_user(title: str, message: str) -> None:
 _STEPS = [
     rotate_log,
     backup_stores,  # pre-archival state is always in the latest snapshot
+    repair_ledger,  # after backup (the pre-repair ledger is in the snapshot), before tune
     sweep_native,
     auto_tune,
     run_archival_step,

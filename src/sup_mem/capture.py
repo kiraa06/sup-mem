@@ -91,6 +91,8 @@ def render_transcript_tail(transcript_path: Path, config: Config) -> str:
     rendered: list[str] = []
     used = 0
     for turn in reversed(turns):
+        if turn.kind == "meta":
+            continue  # host-wrapped entries (skill/command expansions), not the conversation
         text = turn.text[:per_turn]
         block = f"{turn.role.upper()}: {text}"
         if used + len(block) > budget and rendered:
