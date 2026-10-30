@@ -342,9 +342,10 @@ def check_capture_health(config: Config) -> StepResult:
         health = capture_health(config)
         if not health.last_ts:
             return _result("capture-health", "skipped", health.summary())
-        if health.failures:
-            fix = capture_remedy(health.last_failure_status, config)
-            return _result("capture-health", "warn", f"{health.summary()} — fix: {fix}")
+        if health.failing:
+            fix = capture_remedy(health.last_status, config)
+            # fix first: notifications truncate the detail
+            return _result("capture-health", "warn", f"fix: {fix} · {health.summary()}")
         return _result("capture-health", "ok", health.summary())
     except Exception as exc:
         return _result("capture-health", "warn", f"could not read capture.log: {exc}")
@@ -397,6 +398,12 @@ def run_maintenance(config: Config) -> list[StepResult]:
     elif config.maintenance.notify:
         summary = "; ".join(f"{r.name}: {r.detail[:80]}" for r in failures)
         notify_user("sup-mem maintain", f"{len(failures)} step(s) failed — {summary}")
+    # A warning (e.g. a dead `claude` login failing every capture) is only useful if seen —
+    # maintain.log is not. Notify for it too, without failing the run.
+    warnings = [r for r in results if r.status == "warn"]
+    if warnings and config.maintenance.notify:
+        summary = "; ".join(f"{r.name}: {r.detail[:120]}" for r in warnings)
+        notify_user("sup-mem maintain", f"needs a look — {summary}")
     return results
 
 

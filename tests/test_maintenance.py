@@ -255,11 +255,20 @@ def test_capture_health_step_warns_without_failing_the_run(
     assert broken.status == "warn"
     assert "1 of 2 failed" in broken.detail and "claude auth login" in broken.detail
 
-    # warn is not failed: the stamp is still written and nothing notifies
+    # warn is not failed: the stamp is still written — but the user IS told (maintain.log is
+    # never read, which is how a dead login went unnoticed)
     monkeypatch.setattr(maintenance, "_STEPS", [maintenance.check_capture_health])
-    monkeypatch.setattr(maintenance, "notify_user", lambda *a: pytest.fail("notified"))
+    told: list[str] = []
+    monkeypatch.setattr(maintenance, "notify_user", lambda title, msg: told.append(msg))
     assert [r.status for r in maintenance.run_maintenance(config)] == ["warn"]
     assert config.maintain_stamp_path.exists()
+    assert len(told) == 1 and "claude auth login" in told[0]
+
+    # A later success means it recovered: the failure stays in the summary, no warning.
+    with log.open("a") as fh:
+        fh.write(json.dumps({"ts": now, "status": "ok"}) + "\n")
+    recovered = maintenance.check_capture_health(config)
+    assert recovered.status == "ok" and "1 of 3 failed" in recovered.detail
 
     off = make_config(capture={"enabled": False})
     assert maintenance.check_capture_health(off).status == "skipped"

@@ -218,8 +218,8 @@ def collect_checks(
                 "capture",
                 True,
                 cap.summary(),
-                capture_remedy(cap.last_failure_status, config) if cap.failures else "",
-                warn=bool(cap.failures),
+                capture_remedy(cap.last_status, config) if cap.failing else "",
+                warn=cap.failing,
             )
         )
 

@@ -331,6 +331,12 @@ class CaptureHealth:
     last_failure_status: str = ""  # newest failure inside the window
     last_failure_detail: str = ""
 
+    @property
+    def failing(self) -> bool:
+        """The newest capture failed — still broken. Failures followed by a success are history
+        (shown in the summary), not something to act on."""
+        return bool(self.last_status) and self.last_status not in HEALTHY_STATUSES
+
     def summary(self) -> str:
         if not self.last_ts:
             return "no captures logged yet"

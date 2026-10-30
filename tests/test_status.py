@@ -140,6 +140,12 @@ def test_capture_failures_warn_with_fix_but_stay_wired(
     _write_capture_log(config, ("timeout", "no reply within 90s"))
     assert "capture.timeout_seconds" in capture_check().fix
 
+    # Failures followed by a success are history, not an alarm (the 10-29 outage recovered
+    # by 10-30; a 7-day warning after that would be noise).
+    _write_capture_log(config, ("auth", expired), ("ok", ""))
+    recovered = capture_check()
+    assert not recovered.warn and not recovered.fix and "1 of 2 failed" in recovered.detail
+
 
 def test_capture_disabled_is_reported(
     make_config: Callable[..., Config], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
