@@ -449,3 +449,12 @@ def test_transcript_rendering_respects_budget(make_config: Any, tmp_path: Path) 
     assert "assistant reply 9" in text.lower()  # newest turns win
     assert "turn 0 about deploys" not in text.lower()  # oldest turns dropped under budget
     assert "USER:" in text and "ASSISTANT:" in text
+
+
+def test_rendering_skips_host_wrapped_meta_entries(make_config: Any, tmp_path: Path) -> None:
+    path = _transcript(tmp_path / "t.jsonl", n_turns=2)
+    with path.open("a", encoding="utf-8") as fh:
+        meta = {"role": "user", "content": "<skill-expansion> boilerplate " * 10}
+        fh.write(json.dumps({"type": "user", "isMeta": True, "message": meta}) + "\n")
+    text = capture.render_transcript_tail(path, make_config())
+    assert "skill-expansion" not in text and "assistant reply 1" in text

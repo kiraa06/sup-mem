@@ -224,6 +224,7 @@ def test_run_maintenance_is_green_and_idempotent(
     assert names == [
         "rotate",
         "backup",
+        "ledger-repair",
         "sweep",
         "auto-tune",
         "archival",
