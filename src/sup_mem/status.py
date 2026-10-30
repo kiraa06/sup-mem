@@ -23,6 +23,8 @@ class Check:
     ok: bool
     detail: str
     fix: str = ""
+    # Passes the wiring verdict but needs a look (rendered `!`, never fails `status`).
+    warn: bool = False
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -202,5 +204,23 @@ def collect_checks(
         checks.append(Check("last-maintain", True, stamp.read_text().strip()[:19]))
     else:
         checks.append(Check("last-maintain", True, "never (runs on schedule or manually)"))
+
+    # 9) PreCompact capture health — fails open by design, so read its log back here.
+    # Advisory like last-maintain: a warning with the fix, never a red wiring line.
+    if not config.capture.enabled:
+        checks.append(Check("capture", True, "disabled in config ([capture] enabled=false)"))
+    else:
+        from sup_mem.capture import capture_health, capture_remedy
+
+        cap = capture_health(config)
+        checks.append(
+            Check(
+                "capture",
+                True,
+                cap.summary(),
+                capture_remedy(cap.last_failure_status, config) if cap.failures else "",
+                warn=bool(cap.failures),
+            )
+        )
 
     return checks

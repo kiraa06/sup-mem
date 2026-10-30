@@ -267,7 +267,7 @@ The per-prompt cost is dominated by Python process startup, not sup-mem's work �
 | `sup-mem archive [--dry-run\|--list]` | Evidence-based cold tier: superseded/quarantined move on schedule; over `main_max_mb` the most-useless decayed memories move; over `archive_max_mb` the oldest archived are **deleted forever** (FIFO, chain-audited; `0` disables). |
 | `sup-mem restore <id…>` | Move archived versions back to the hot store, state intact. |
 | `sup-mem-hook-precompact` | (hook) Just before Claude Code compacts a session, a headless `claude -p` distills the transcript into durable memories so they survive the compaction. Costs a small-model call; disable with `[capture] enabled=false`. |
-| `sup-mem status` | One-glance wiring check: hooks, MCP server, store, ledger activity, backups, service — with a fix command per red line. |
+| `sup-mem status` | One-glance wiring check: hooks, MCP server, store, ledger activity, backups, service, recent capture failures — with a fix command per red line. |
 | `sup-mem maintain` | Housekeeping: rotate the retrieval log (ledger cursors rebased), back up + vacuum the stores, sweep native memories, lossless auto-tune, health check. |
 | `sup-mem service install` | Schedule `maintain` daily — macOS LaunchAgent or Linux systemd user timer, auto-detected (uninstall/status too). No scheduler available: prints the crontab line. |
 | `sup-mem doctor` | Backend/service health; enforce the model-consistency contract. |

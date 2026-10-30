@@ -47,8 +47,11 @@ need…") instead of distilling it. That was every historical `unparsed` capture
 
 `capture.log` statuses: `ok` · `empty` (valid JSON, nothing durable — the extractor doing
 its job) · `unparsed` (prose reply) · `bad-json` (an array that broke, e.g. truncation) ·
-`exit-N` · `timeout` · `error` · `no-cli`. Failures carry a one-line `detail` (stderr or
-reply head) so the next one is diagnosable.
+`auth` (the `claude` CLI's login is dead — run `claude auth login`) · `exit-N` · `timeout` ·
+`error` · `no-cli`. Failures carry a one-line `detail` (stderr or reply head) so the next one
+is diagnosable. Capture fails open, so failures are read back for you: `sup-mem status` shows
+a `capture` row (a `!` warning with the fix when anything other than `ok`/`empty` was logged
+in the last 7 days) and nightly `maintain` logs the same as a `capture-health` step.
 
 ## Acceptance (hermetic — a fake `claude` script; CI never spends tokens)
 

@@ -232,7 +232,37 @@ def test_run_maintenance_is_green_and_idempotent(
         "vacuum",
         "provenance",
         "health",
+        "capture-health",
     ]
+
+
+def test_capture_health_step_warns_without_failing_the_run(
+    config: Config, make_config: Callable[..., Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert maintenance.check_capture_health(config).status == "skipped"  # no capture.log yet
+
+    config.logs_dir.mkdir(parents=True)
+    log = config.logs_dir / "capture.log"
+    now = datetime.now(UTC).isoformat()
+    log.write_text(json.dumps({"ts": now, "status": "ok"}) + "\n")
+    healthy = maintenance.check_capture_health(config)
+    assert healthy.status == "ok" and healthy.detail.startswith("1 ok in 7d")
+
+    expired = "Failed to authenticate: OAuth session expired and could not be refreshed"
+    with log.open("a") as fh:
+        fh.write(json.dumps({"ts": now, "status": "auth", "detail": expired}) + "\n")
+    broken = maintenance.check_capture_health(config)
+    assert broken.status == "warn"
+    assert "1 of 2 failed" in broken.detail and "claude auth login" in broken.detail
+
+    # warn is not failed: the stamp is still written and nothing notifies
+    monkeypatch.setattr(maintenance, "_STEPS", [maintenance.check_capture_health])
+    monkeypatch.setattr(maintenance, "notify_user", lambda *a: pytest.fail("notified"))
+    assert [r.status for r in maintenance.run_maintenance(config)] == ["warn"]
+    assert config.maintain_stamp_path.exists()
+
+    off = make_config(capture={"enabled": False})
+    assert maintenance.check_capture_health(off).status == "skipped"
 
 
 # --- launchd service ------------------------------------------------------------------------

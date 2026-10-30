@@ -563,7 +563,12 @@ def cmd_maintain(config: Config) -> int:
     table.add_column("step")
     table.add_column("status")
     table.add_column("detail", overflow="fold")
-    icon = {"ok": "[green]ok[/]", "skipped": "[dim]skipped[/]", "failed": "[red]FAILED[/]"}
+    icon = {
+        "ok": "[green]ok[/]",
+        "skipped": "[dim]skipped[/]",
+        "warn": "[yellow]warn[/]",
+        "failed": "[red]FAILED[/]",
+    }
     for r in results:
         table.add_row(r.name, icon.get(r.status, r.status), r.detail)
     console.print(table)
@@ -572,6 +577,9 @@ def cmd_maintain(config: Config) -> int:
     if failed:
         console.print(f"[red]{len(failed)} step(s) failed[/]")
         return 1
+    warned = [r for r in results if r.status == "warn"]
+    if warned:  # not a failed run — the maintenance itself worked
+        console.print(f"[yellow]{len(warned)} warning(s): {', '.join(r.name for r in warned)}[/]")
     return 0
 
 
@@ -594,14 +602,17 @@ def cmd_status(
     table.add_column("detail", overflow="fold")
     table.add_column("fix", overflow="fold")
     for c in checks:
-        table.add_row(c.name, "[green]✓[/]" if c.ok else "[red]✗[/]", c.detail, c.fix)
+        mark = "[red]✗[/]" if not c.ok else "[yellow]![/]" if c.warn else "[green]✓[/]"
+        table.add_row(c.name, mark, c.detail, c.fix)
     console.print(table)
 
     bad = [c for c in checks if not c.ok]
     if bad:
         console.print(f"[red]{len(bad)} check(s) need attention[/]")
         return 1
-    console.print("[green]all wired[/]")
+    warned = [c for c in checks if c.warn]
+    note = f" [yellow]· {len(warned)} warning(s) — see fix column[/]" if warned else ""
+    console.print(f"[green]all wired[/]{note}")
     return 0
 
 
